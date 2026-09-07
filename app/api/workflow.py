@@ -43,7 +43,7 @@ async def intake(
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
 ) -> WorkflowIntakeResponse:
-    request_id = request.headers.get("X-Request-ID")
+    request_id = getattr(request.state, "request_id", None) or request.headers.get("X-Request-ID")
     return await service.intake(
         body=body,
         idempotency_key=idempotency_key,
@@ -78,7 +78,7 @@ async def review_observation(
     if_match: Annotated[str | None, Header(alias="If-Match")] = None,
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
 ) -> ObservationReviewResponse:
-    request_id = request.headers.get("X-Request-ID")
+    request_id = getattr(request.state, "request_id", None) or request.headers.get("X-Request-ID")
     return await service.review_observation(
         observation_id=observation_id,
         body=body,

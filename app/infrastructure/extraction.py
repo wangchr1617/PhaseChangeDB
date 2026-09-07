@@ -15,6 +15,7 @@ from uuid6 import uuid7
 
 from app.domain.workflow import (
     DomainConflictError,
+    DomainValidationError,
     EntityNotFoundError,
     PreconditionFailedError,
     resolve_and_validate_normalization,
@@ -414,7 +415,7 @@ class MySQLExtractionRepository:
         严格不变量：
         - 要求 If-Match: W/"<row_version>" 乐观锁。
         - 候选只能在 pending 状态下处理，重复处理返回 409。
-        - ACCEPT / PROMOTE：单个事务内创建正式 Observation (状态为 HUMAN_REVIEWED)、
+        - ACCEPT：单个事务内创建正式 Observation (状态为 HUMAN_REVIEWED)、
           Evidence Link、ext_review、Audit、Outbox。
         - REJECT：只写入 ext_review 并更新状态为 rejected，严禁创建 Observation。
         """
@@ -447,12 +448,15 @@ class MySQLExtractionRepository:
             current_status = cand_row["status"]
             has_evidence = cand_row["evidence_fragment_id"] is not None
             decision_raw = review.decision.lower()
-            if decision_raw in ("accept", "promote"):
+            if decision_raw == "accept":
                 decision_norm = "accept"
             elif decision_raw == "reject":
                 decision_norm = "reject"
             else:
-                decision_norm = "modify"
+                raise DomainValidationError(f"非法的审核决定: '{review.decision}'，只允许: accept, reject")
+
+            if decision_norm == "reject" and review.corrected_payload is not None:
+                raise DomainValidationError("reject 决策不允许携带 corrected_payload")
 
             validate_candidate_review(
                 current_status=current_status,
@@ -570,7 +574,7 @@ class MySQLExtractionRepository:
                     reviewed_at=now_dt,
                 )
 
-            # 3. 如果是 ACCEPT / MODIFY：晋升为正式 Observation
+            # 3. 如果是 ACCEPT：晋升为正式 Observation
             if review.corrected_payload:
                 payload_dict.update(review.corrected_payload)
 

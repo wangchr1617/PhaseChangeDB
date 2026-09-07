@@ -127,19 +127,16 @@ class ExtractionCandidateRead(APIModel):
 
 
 class CandidateReviewRequest(APIModel):
-    decision: Literal[
-        "accept",
-        "modify",
-        "reject",
-        "promote",
-        "ACCEPT",
-        "MODIFY",
-        "REJECT",
-        "PROMOTE",
-    ]
+    decision: Literal["accept", "reject"]
     reviewer: str = Field(min_length=1, max_length=255)
     comment: str | None = Field(default=None, max_length=2000)
     corrected_payload: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def validate_decision_payload(self) -> CandidateReviewRequest:
+        if self.decision == "reject" and self.corrected_payload is not None:
+            raise ValueError("reject 决策不允许携带 corrected_payload")
+        return self
 
 
 # 兼容既有命名

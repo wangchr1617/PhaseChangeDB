@@ -49,7 +49,7 @@ async def stage_candidate(
     service: ExtractionService,
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> ExtractionCandidateCreateResponse:
-    request_id = request.headers.get("X-Request-ID")
+    request_id = getattr(request.state, "request_id", None) or request.headers.get("X-Request-ID")
     return await service.stage_candidate(
         body=body,
         idempotency_key=idempotency_key,
@@ -83,7 +83,7 @@ async def review_candidate(
     if_match: Annotated[str | None, Header(alias="If-Match")] = None,
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
 ) -> CandidateReviewResponse:
-    request_id = request.headers.get("X-Request-ID")
+    request_id = getattr(request.state, "request_id", None) or request.headers.get("X-Request-ID")
     return await service.review_candidate(
         candidate_id=candidate_id,
         body=body,

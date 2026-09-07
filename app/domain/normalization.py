@@ -22,42 +22,58 @@ def resolve_and_validate_normalization(
 
     不变量规则：
     1. 原始值与原始单位（original_value_text, original_unit_text）是绝对权威事实，不可丢失。
-    2. 如果没有执行明确的单位归一化，normalized_value 与 normalized_unit_term_id 必须同时保持 None。
-    3. 如果提供了 normalized_value，必须同时提供 normalized_unit_term_id。
-    4. 如果提供了 normalized_unit_term_id，必须同时提供 normalized_value。
-    5. 归一化单位 normalized_unit_term_id 必须与属性定义中的 canonical_unit_term_id 完全一致。
-    6. 暂时没有全局单位换算引擎时，同单位等值归一化必须经过明确的单位符号验证，数值必须与原始测量值保持一致。
+    2. 如果未提供 normalized_value 与 normalized_unit_term_id，两者都返回 None，允许仅保存原始值和原始单位。
+    3. 如果只提供其中一个，抛出 DomainValidationError（状态码 400），不写入数据库。
+    4. 如果两者均提供：
+       a. 属性必须存在规范单位（canonical_unit_term_id 与 canonical_unit_symbol 均非空）；
+       b. normalized_unit_term_id 必须严格等于 canonical_unit_term_id；
+       c. original_unit_text.strip() 必须严格等于 canonical_unit_symbol.strip()；
+          若不相等，直接拒绝并提示“当前 MVP 尚不支持跨单位自动换算，请省略 normalized_* 或先在可信换算流程中处理”；
+       d. value_numeric 必须存在；
+       e. normalized_value 必须在 Decimal 语义下严格等于 value_numeric；
+       f. 禁止大小写折叠、单位别名猜测或自动换算。
+    5. 保持 Decimal 精度，不要在持久化前转成 float。
     """
-    # 规则 3 & 4：二者必须同时提供或同时为空
+    # 规则 2 & 3：二者必须同时提供或同时为空
     if normalized_value is not None and normalized_unit_term_id is None:
         raise DomainValidationError("提供 normalized_value 时必须同时提供 normalized_unit_term_id")
     if normalized_unit_term_id is not None and normalized_value is None:
         raise DomainValidationError("提供 normalized_unit_term_id 时必须同时提供 normalized_value")
 
-    # 规则 2：未提供明确归一化时，保持为空（严禁隐式伪造 fallback 到 value_numeric）
+    # 规则 1 & 2：未提供明确归一化时，保持为空（严禁隐式伪造 fallback 到 value_numeric）
     if normalized_value is None and normalized_unit_term_id is None:
         return None, None
 
-    # 规则 5：提供归一化值时，必须确保属性本身定义了规范单位且相互匹配
-    if canonical_unit_term_id is None:
-        raise DomainValidationError("该属性未定义 canonical_unit_term_id，无法接受归一化值")
+    # 规则 4.a：属性必须存在规范单位
+    if canonical_unit_term_id is None or not canonical_unit_symbol or not canonical_unit_symbol.strip():
+        raise DomainValidationError("该属性未定义规范单位（canonical_unit），无法接受归一化值")
 
+    # 规则 4.b：normalized_unit_term_id 必须严格等于 canonical_unit_term_id
     if normalized_unit_term_id != canonical_unit_term_id:
         raise DomainValidationError(
             f"归一化单位 '{normalized_unit_term_id}' 与属性规范单位 '{canonical_unit_term_id}' 不匹配"
         )
 
-    norm_dec = Decimal(str(normalized_value))
+    # 规则 4.c：原始单位与规范单位必须严格相等（禁止跨单位自动猜测）
+    orig_sym = original_unit_text.strip()
+    canon_sym = canonical_unit_symbol.strip()
+    if orig_sym != canon_sym:
+        raise DomainValidationError(
+            "当前 MVP 尚不支持跨单位自动换算，请省略 normalized_* 或先在可信换算流程中处理"
+        )
 
-    # 规则 6：同单位等值归一化检验
-    if canonical_unit_symbol and original_unit_text.strip() == canonical_unit_symbol.strip():
-        if value_numeric is not None:
-            val_dec = Decimal(str(value_numeric))
-            if norm_dec != val_dec:
-                raise DomainValidationError(
-                    f"原始单位与规范单位同为 '{canonical_unit_symbol}'，"
-                    f"归一化值 ({norm_dec}) 必须与原始数值 ({val_dec}) 一致"
-                )
+    # 规则 4.d：value_numeric 必须存在
+    if value_numeric is None:
+        raise DomainValidationError("提供归一化值时，原始数值 (value_numeric) 必须存在")
+
+    # 规则 4.e：normalized_value 必须在 Decimal 语义下严格等于 value_numeric
+    norm_dec = Decimal(str(normalized_value))
+    val_dec = Decimal(str(value_numeric))
+    if norm_dec != val_dec:
+        raise DomainValidationError(
+            f"原始单位与规范单位同为 '{canon_sym}'，"
+            f"归一化值 ({norm_dec}) 必须与原始数值 ({val_dec}) 一致"
+        )
 
     return norm_dec, canonical_unit_term_id
 

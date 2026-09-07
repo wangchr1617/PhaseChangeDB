@@ -10,12 +10,12 @@ PhaseChangeDB 是面向相变材料的、以证据为基础的科学数据与知
 
 1. **科研数据录入与严格人工确认**：
    - **人工专家录入**（`/v1/workflow/intake`）：录入文献、文档元数据（`s3://` / `https://` 协议与 SHA-256 校验）、材料、样品、实验测量、证据片段与观测。生成的观测状态强制且默认设为 `HUMAN_REVIEWED`，拒绝直接创建为 `VERIFIED` 或 `AI_*`；
-   - **严格单位归一化不变量**：未进行明确换算确认时，`normalized_value` 与 `normalized_unit_term_id` 严格保持 `NULL`，绝对不隐式复制未经确认的原始数值；数值使用 `Decimal` 严格防止浮点精度丢失；
+   - **严格单位归一化不变量**：当前 MVP 阶段尚未接入跨单位自动换算引擎；当且仅当原始单位与性质定义的规范单位完全一致时，才校验并写入 `normalized_*`；若原始单位不同，调用方必须省略 `normalized_*`（由系统安全置为 NULL），严禁伪造换算结果；若在异单位情况下强行传入 `normalized_*` 将直接返回 HTTP 400 拒绝；数值使用 `Decimal` 严格防止浮点精度丢失；
    - **单一事务提交**：所有实体与关联在单个 MySQL 8.4 事务中原子提交，同时写入 `sys_audit_log` 审计记录与 `sys_outbox_event` 事件。
 
 2. **AI 提取候选完全暂存与晋升链路**：
-   - **AI 提取候选暂存**（`/v1/extractions/candidates`）：AI 提取结果仅写入 `ext_*` 暂存表（`ext_run`, `ext_candidate`, `lit_document`, `evd_fragment`），记录模型版本、提示词版本、本体版本、置信度与证据片段；**绝对不直接写入 `obs_observation`**；
-   - **候选人工审核晋升**（`/v1/extraction-candidates/{id}/review`）：人工专家审核通过（`accept`/`promote`）时，原子创建正式 `obs_observation`（状态为 `HUMAN_REVIEWED`）、关联证据及不可变审核记录 `ext_review`；拒绝（`reject`）时仅标记状态，严禁产生 Observation。
+   - **AI 提取候选暂存**（`/v1/extractions/candidates`）：AI 提取结果仅写入 `ext_*` 暂存表（`ext_run`, `ext_candidate`, `lit_document`, `evd_fragment`），记录模型版本、提示词版本、本体版本、置信度与证据片段；**绝对不直接写入 `obs_observation`**；当前 MVP 的 PDF 上传与提取仅负责登记和校验元数据与对象存储引用（`storage_uri`、SHA-256），尚未挂载真实 OCR/多模态抽取流水线；
+   - **候选人工审核晋升**（`/v1/extraction-candidates/{id}/review`）：候选审核仅支持 `accept` 与 `reject` 两种决策。人工专家审核通过（`accept`）时，原子创建正式 `obs_observation`（状态为 `HUMAN_REVIEWED`）、关联证据及不可变审核记录 `ext_review`（可按需携带 `corrected_payload`）；审核拒绝（`reject`）时仅更新候选状态为 `rejected`，严禁产生 Observation，且禁止携带修正载荷（HTTP 422）。
 
 3. **观测人工审核状态机与证据溯源**：
    - 观测值详情展示：完整回溯材料、文献出处、样品参数与对应证据原文及图表号；

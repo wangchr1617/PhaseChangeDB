@@ -494,7 +494,7 @@ async def test_ai_extraction_staging_and_promotion_lifecycle():
             assert rej_cand_db["status"] == "rejected"
             assert rej_cand_db["promoted_entity_id"] is None
 
-        # 6. 审核晋升原候选 (ACCEPT / PROMOTE)
+        # 6. 审核晋升原候选 (ACCEPT)
         # 验证 If-Match 乐观锁：旧版本/错误格式返回 412 或 400
         res_wrong_etag = await client.post(
             f"/v1/extraction-candidates/{candidate_id}/review",
@@ -515,6 +515,42 @@ async def test_ai_extraction_staging_and_promotion_lifecycle():
             },
         )
         assert res_stale_etag.status_code == 412
+
+        # 验证 modify / promote 决策被 422 拒绝（已从接口模型废弃）
+        res_modify = await client.post(
+            f"/v1/extraction-candidates/{candidate_id}/review",
+            json={"decision": "modify", "reviewer": "Dr. Smith"},
+            headers={
+                "Authorization": f"Bearer {TEST_REVIEWER_TOKEN}",
+                "If-Match": 'W/"1"',
+            },
+        )
+        assert res_modify.status_code == 422
+
+        res_promote_rej = await client.post(
+            f"/v1/extraction-candidates/{candidate_id}/review",
+            json={"decision": "promote", "reviewer": "Dr. Smith"},
+            headers={
+                "Authorization": f"Bearer {TEST_REVIEWER_TOKEN}",
+                "If-Match": 'W/"1"',
+            },
+        )
+        assert res_promote_rej.status_code == 422
+
+        # 验证 reject 决策携带 corrected_payload 被 422 拒绝
+        res_rej_payload = await client.post(
+            f"/v1/extraction-candidates/{candidate_id}/review",
+            json={
+                "decision": "reject",
+                "reviewer": "Dr. Smith",
+                "corrected_payload": {"original_value_text": "999"},
+            },
+            headers={
+                "Authorization": f"Bearer {TEST_REVIEWER_TOKEN}",
+                "If-Match": 'W/"1"',
+            },
+        )
+        assert res_rej_payload.status_code == 422
 
         # 成功晋升 (If-Match: W/"1")
         promote_req_id = f"req-promote-{unique_suffix}"
@@ -616,3 +652,437 @@ async def test_ai_extraction_staging_and_promotion_lifecycle():
         assert verify_data["previous_status"] == "HUMAN_REVIEWED"
         assert verify_data["new_status"] == "VERIFIED"
         assert verify_data["row_version"] == 2
+
+
+@pytest.mark.asyncio
+async def test_cross_unit_normalization_rejection_and_transaction_rollback():
+    """验证异单位归一化在录入和晋升中均被严格拒绝，且事务整体回滚无残留。"""
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        # 1. 查询结晶温度性质定义及其规范单位 (canonical_unit 为 K)
+        async with session_factory() as session:
+            prop_row = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT p.id, p.canonical_unit_term_id, u.code AS canonical_unit_code
+                        FROM obs_property_definition p
+                        JOIN ont_term u ON p.canonical_unit_term_id = u.id
+                        WHERE p.code = 'crystallization_temperature'
+                        LIMIT 1
+                        """
+                    )
+                )
+            ).mappings().first()
+            assert prop_row is not None
+            prop_uuid = str(uuid.UUID(bytes=bytes(prop_row["id"])))
+            canon_unit_uuid = str(uuid.UUID(bytes=bytes(prop_row["canonical_unit_term_id"])))
+            assert prop_row["canonical_unit_code"] == "K"
+
+            sample_type_id = (
+                await session.execute(
+                    text("SELECT id FROM ont_term WHERE namespace = 'sample_type' LIMIT 1")
+                )
+            ).scalar_one()
+            sample_type_uuid = str(uuid.UUID(bytes=bytes(sample_type_id)))
+
+            meas_type_id = (
+                await session.execute(
+                    text("SELECT id FROM ont_term WHERE namespace = 'measurement_type' LIMIT 1")
+                )
+            ).scalar_one()
+            meas_type_uuid = str(uuid.UUID(bytes=bytes(meas_type_id)))
+
+        # 2. 人工录入端点：原始单位为 °C，规范单位为 K，客户端提供了 normalized_*
+        unique_suffix = uuid.uuid4().hex[:8]
+        failed_doi = f"10.1000/cross-unit-fail-{unique_suffix}"
+        failed_formula = f"CrossUnitFail_{unique_suffix}"
+        failed_sample_label = f"FAIL_SAMPLE_{unique_suffix}"
+        failed_value_text = f"150_{unique_suffix}"
+
+        cross_unit_req = {
+            "paper": {
+                "title": f"Cross Unit Paper {unique_suffix}",
+                "doi": failed_doi,
+                "journal": "Nature",
+                "publication_year": 2026,
+            },
+            "document": {
+                "storage_uri": "s3://phasechangedb/articles/cross-fail.pdf",
+                "sha256": "3" * 64,
+                "document_type": "main_article",
+            },
+            "material": {
+                "canonical_formula": failed_formula,
+                "chemical_system": "Cr-Un",
+                "name": "Cross Unit Material",
+            },
+            "sample": {
+                "sample_label": failed_sample_label,
+                "sample_type_term_id": sample_type_uuid,
+            },
+            "measurement": {
+                "measurement_type_term_id": meas_type_uuid,
+                "instrument": "DSC",
+            },
+            "evidence": {
+                "page_number": 5,
+                "text_snippet": "Phase transition observed at 150 °C.",
+            },
+            "observation": {
+                "property_definition_id": prop_uuid,
+                "value_kind": "scalar",
+                "value_numeric": 150.0,
+                "original_value_text": failed_value_text,
+                "original_unit_text": "°C",
+                "normalized_value": 423.15,
+                "normalized_unit_term_id": canon_unit_uuid,
+                "verification_status": "HUMAN_REVIEWED",
+            },
+        }
+
+        res_intake = await client.post(
+            "/v1/workflow/intake",
+            json=cross_unit_req,
+            headers={
+                "Authorization": f"Bearer {TEST_REVIEWER_TOKEN}",
+                "Idempotency-Key": f"cross-fail-key-{unique_suffix}",
+            },
+        )
+        assert res_intake.status_code == 400
+        assert "当前 MVP 尚不支持跨单位自动换算" in res_intake.json()["detail"]
+
+        # 3. 关键验证：数据库完全无残留！
+        async with session_factory() as session:
+            paper_cnt = (
+                await session.execute(
+                    text("SELECT COUNT(*) FROM lit_paper WHERE doi = :doi"),
+                    {"doi": failed_doi},
+                )
+            ).scalar_one()
+            assert paper_cnt == 0, "事务失败后严禁在 lit_paper 留下记录"
+
+            mat_cnt = (
+                await session.execute(
+                    text("SELECT COUNT(*) FROM mat_material WHERE canonical_formula = :f"),
+                    {"f": failed_formula},
+                )
+            ).scalar_one()
+            assert mat_cnt == 0, "事务失败后严禁在 mat_material 留下记录"
+
+            sam_cnt = (
+                await session.execute(
+                    text("SELECT COUNT(*) FROM sam_sample WHERE sample_label = :l"),
+                    {"l": failed_sample_label},
+                )
+            ).scalar_one()
+            assert sam_cnt == 0, "事务失败后严禁在 sam_sample 留下记录"
+
+            obs_cnt = (
+                await session.execute(
+                    text("SELECT COUNT(*) FROM obs_observation WHERE original_value_text = :t"),
+                    {"t": failed_value_text},
+                )
+            ).scalar_one()
+            assert obs_cnt == 0, "事务失败后严禁在 obs_observation 留下记录"
+
+        # 4. AI 候选晋升路径：候选包含异单位归一化数据，审核晋升时必须被拒绝
+        ai_suffix = uuid.uuid4().hex[:8]
+        ai_stage_req = {
+            "model_name": "LlmExtractor",
+            "model_version": "v1.0",
+            "prompt_version": "p1",
+            "ontology_version": "0.1",
+            "paper": {
+                "title": f"AI Cross Unit Paper {ai_suffix}",
+                "doi": f"10.1000/ai-cross-{ai_suffix}",
+                "journal": "APL",
+                "publication_year": 2026,
+            },
+            "document": {
+                "storage_uri": "s3://phasechangedb/articles/ai-cross.pdf",
+                "sha256": "4" * 64,
+                "document_type": "main_article",
+            },
+            "candidate_type": "observation",
+            "confidence": 0.9,
+            "candidate_data": {
+                "material": {
+                    "canonical_formula": f"AICross_{ai_suffix}",
+                    "chemical_system": "Al-Cr",
+                },
+                "sample": {
+                    "sample_label": f"AI_SAMPLE_{ai_suffix}",
+                    "sample_type_term_id": sample_type_uuid,
+                },
+                "measurement": {
+                    "measurement_type_term_id": meas_type_uuid,
+                },
+                "evidence": {
+                    "page_number": 1,
+                    "text_snippet": "Transition at 180 °C",
+                },
+                "property_definition_id": prop_uuid,
+                "value_kind": "scalar",
+                "value_numeric": 180.0,
+                "original_value_text": f"180_{ai_suffix}",
+                "original_unit_text": "°C",
+                "normalized_value": 453.15,
+                "normalized_unit_term_id": canon_unit_uuid,
+            },
+        }
+
+        res_stage = await client.post(
+            "/v1/extractions/candidates",
+            json=ai_stage_req,
+            headers={"Idempotency-Key": f"ai-cross-stage-{ai_suffix}"},
+        )
+        assert res_stage.status_code == 201
+        ai_cand_id = res_stage.json()["candidate_id"]
+
+        # 尝试 accept 晋升带有异单位归一化的候选 -> 必须返回 400
+        res_ai_promote = await client.post(
+            f"/v1/extraction-candidates/{ai_cand_id}/review",
+            json={"decision": "accept", "reviewer": "Dr. Alice"},
+            headers={
+                "Authorization": f"Bearer {TEST_REVIEWER_TOKEN}",
+                "If-Match": 'W/"1"',
+            },
+        )
+        assert res_ai_promote.status_code == 400
+        assert "当前 MVP 尚不支持跨单位自动换算" in res_ai_promote.json()["detail"]
+
+        # 验证数据库中候选状态仍未被晋升，且没有产生 Observation
+        async with session_factory() as session:
+            obs_cnt = (
+                await session.execute(
+                    text("SELECT COUNT(*) FROM obs_observation WHERE original_value_text = :t"),
+                    {"t": f"180_{ai_suffix}"},
+                )
+            ).scalar_one()
+            assert obs_cnt == 0
+
+
+@pytest.mark.asyncio
+async def test_server_generated_request_id_in_audit_and_response_headers():
+    """验证当客户端未显式提供 X-Request-ID 时，服务端生成统一非空 ID 并进入响应头与审计日志。"""
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        # 查询种子 UUID
+        async with session_factory() as session:
+            sample_type_id = (
+                await session.execute(
+                    text("SELECT id FROM ont_term WHERE namespace = 'sample_type' LIMIT 1")
+                )
+            ).scalar_one()
+            meas_type_id = (
+                await session.execute(
+                    text("SELECT id FROM ont_term WHERE namespace = 'measurement_type' LIMIT 1")
+                )
+            ).scalar_one()
+            prop_id = (
+                await session.execute(
+                    text("SELECT id FROM obs_property_definition WHERE code = 'crystallization_temperature' LIMIT 1")
+                )
+            ).scalar_one()
+
+        sample_type_uuid = str(uuid.UUID(bytes=bytes(sample_type_id)))
+        meas_type_uuid = str(uuid.UUID(bytes=bytes(meas_type_id)))
+        prop_uuid = str(uuid.UUID(bytes=bytes(prop_id)))
+
+        suffix = uuid.uuid4().hex[:8]
+
+        # 1. 测试人工录入：不传 X-Request-ID
+        intake_req = {
+            "paper": {
+                "title": f"Audit ReqId Paper {suffix}",
+                "doi": f"10.1000/reqid-paper-{suffix}",
+                "journal": "Science",
+                "publication_year": 2026,
+            },
+            "document": {
+                "storage_uri": "s3://phasechangedb/articles/reqid.pdf",
+                "sha256": "5" * 64,
+                "document_type": "main_article",
+            },
+            "material": {
+                "canonical_formula": f"ReqIdMat_{suffix}",
+                "chemical_system": "Rq-Id",
+            },
+            "sample": {
+                "sample_label": f"REQID_SAMPLE_{suffix}",
+                "sample_type_term_id": sample_type_uuid,
+            },
+            "measurement": {
+                "measurement_type_term_id": meas_type_uuid,
+            },
+            "evidence": {
+                "page_number": 1,
+                "text_snippet": "Valid snippet for request id test",
+            },
+            "observation": {
+                "property_definition_id": prop_uuid,
+                "value_kind": "scalar",
+                "value_numeric": 420.0,
+                "original_value_text": f"420_reqid_{suffix}",
+                "original_unit_text": "K",
+                "verification_status": "HUMAN_REVIEWED",
+            },
+        }
+
+        res_intake = await client.post(
+            "/v1/workflow/intake",
+            json=intake_req,
+            headers={
+                "Authorization": f"Bearer {TEST_REVIEWER_TOKEN}",
+                "Idempotency-Key": f"reqid-intake-key-{suffix}",
+            },
+        )
+        assert res_intake.status_code == 201
+        intake_resp_req_id = res_intake.headers.get("X-Request-ID")
+        assert intake_resp_req_id is not None and len(intake_resp_req_id) > 0
+        obs_id = res_intake.json()["observation_id"]
+
+        # 验证数据库 sys_audit_log 中记录的 request_id 严格与响应头一致
+        async with session_factory() as session:
+            audit_row = (
+                await session.execute(
+                    text(
+                        "SELECT request_id FROM sys_audit_log "
+                        "WHERE entity_id = :eid ORDER BY created_at DESC LIMIT 1"
+                    ),
+                    {"eid": uuid.UUID(obs_id).bytes},
+                )
+            ).mappings().first()
+            assert audit_row is not None
+            assert audit_row["request_id"] == intake_resp_req_id, (
+                "sys_audit_log.request_id 必须与服务端生成的 X-Request-ID 一致"
+            )
+
+        # 2. 测试 Observation 审核流转：不传 X-Request-ID
+        res_obs_review = await client.post(
+            f"/v1/workflow/observations/{obs_id}/review",
+            json={"decision": "VERIFIED", "reviewer": "Dr. ReqId"},
+            headers={
+                "Authorization": f"Bearer {TEST_REVIEWER_TOKEN}",
+                "If-Match": 'W/"1"',
+            },
+        )
+        assert res_obs_review.status_code == 200
+        review_resp_req_id = res_obs_review.headers.get("X-Request-ID")
+        assert review_resp_req_id is not None and len(review_resp_req_id) > 0
+
+        async with session_factory() as session:
+            review_audit_row = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT request_id FROM sys_audit_log
+                        WHERE entity_id = :eid AND action = 'observation_review'
+                        ORDER BY created_at DESC LIMIT 1
+                        """
+                    ),
+                    {"eid": uuid.UUID(obs_id).bytes},
+                )
+            ).mappings().first()
+            assert review_audit_row is not None
+            assert review_audit_row["request_id"] == review_resp_req_id
+
+        # 3. 测试 AI 候选暂存：不传 X-Request-ID
+        cand_stage_req = {
+            "model_name": "ReqIdExtractor",
+            "model_version": "v1.0",
+            "prompt_version": "p1",
+            "ontology_version": "0.1",
+            "paper": {
+                "title": f"Candidate ReqId Paper {suffix}",
+                "doi": f"10.1000/cand-reqid-{suffix}",
+                "journal": "APL",
+                "publication_year": 2026,
+            },
+            "document": {
+                "storage_uri": "s3://phasechangedb/articles/cand-reqid.pdf",
+                "sha256": "6" * 64,
+                "document_type": "main_article",
+            },
+            "candidate_type": "observation",
+            "confidence": 0.85,
+            "candidate_data": {
+                "material": {
+                    "canonical_formula": f"CandReqId_{suffix}",
+                    "chemical_system": "Cd-Rq",
+                },
+                "sample": {
+                    "sample_label": f"CAND_SAMPLE_{suffix}",
+                    "sample_type_term_id": sample_type_uuid,
+                },
+                "measurement": {
+                    "measurement_type_term_id": meas_type_uuid,
+                },
+                "evidence": {
+                    "page_number": 2,
+                    "text_snippet": "Candidate snippet without client request id",
+                },
+                "property_definition_id": prop_uuid,
+                "value_kind": "scalar",
+                "value_numeric": 420.0,
+                "original_value_text": f"420_cand_{suffix}",
+                "original_unit_text": "K",
+            },
+        }
+
+        res_cand_stage = await client.post(
+            "/v1/extractions/candidates",
+            json=cand_stage_req,
+            headers={
+                "Idempotency-Key": f"cand-stage-key-{suffix}",
+            },
+        )
+        assert res_cand_stage.status_code == 201
+        cand_stage_req_id = res_cand_stage.headers.get("X-Request-ID")
+        assert cand_stage_req_id is not None and len(cand_stage_req_id) > 0
+        candidate_id = res_cand_stage.json()["candidate_id"]
+
+        async with session_factory() as session:
+            cand_stage_audit = (
+                await session.execute(
+                    text(
+                        "SELECT request_id FROM sys_audit_log "
+                        "WHERE entity_id = :eid ORDER BY created_at DESC LIMIT 1"
+                    ),
+                    {"eid": uuid.UUID(candidate_id).bytes},
+                )
+            ).mappings().first()
+            assert cand_stage_audit is not None
+            assert cand_stage_audit["request_id"] == cand_stage_req_id
+
+        # 4. 测试候选审核晋升：不传 X-Request-ID
+        res_cand_review = await client.post(
+            f"/v1/extraction-candidates/{candidate_id}/review",
+            json={"decision": "accept", "reviewer": "Dr. ReqId"},
+            headers={
+                "Authorization": f"Bearer {TEST_REVIEWER_TOKEN}",
+                "If-Match": 'W/"1"',
+            },
+        )
+        assert res_cand_review.status_code == 200
+        cand_review_req_id = res_cand_review.headers.get("X-Request-ID")
+        assert cand_review_req_id is not None and len(cand_review_req_id) > 0
+        promoted_obs_id = res_cand_review.json()["promoted_observation_id"]
+        assert promoted_obs_id is not None
+
+        async with session_factory() as session:
+            cand_review_audit = (
+                await session.execute(
+                    text(
+                        """
+                        SELECT request_id FROM sys_audit_log
+                        WHERE entity_id = :eid AND action = 'promote_candidate'
+                        ORDER BY created_at DESC LIMIT 1
+                        """
+                    ),
+                    {"eid": uuid.UUID(promoted_obs_id).bytes},
+                )
+            ).mappings().first()
+            assert cand_review_audit is not None
+            assert cand_review_audit["request_id"] == cand_review_req_id

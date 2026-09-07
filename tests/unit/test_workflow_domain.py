@@ -213,6 +213,30 @@ def test_normalization_rules() -> None:
             canonical_unit_symbol="K",
         )
 
+    # 7. 异单位归一化在 MVP 必须被拒绝（如原始 °C 与规范单位 K）
+    with pytest.raises(DomainValidationError, match="当前 MVP 尚不支持跨单位自动换算"):
+        resolve_and_validate_normalization(
+            original_value_text="150",
+            original_unit_text="°C",
+            value_numeric=150.0,
+            normalized_value=423.15,
+            normalized_unit_term_id=canonical_unit_id,
+            canonical_unit_term_id=canonical_unit_id,
+            canonical_unit_symbol="K",
+        )
+
+    # 8. 属性缺少规范单位定义时提供归一化值，必须拒绝
+    with pytest.raises(DomainValidationError, match="该属性未定义规范单位"):
+        resolve_and_validate_normalization(
+            original_value_text="430",
+            original_unit_text="K",
+            value_numeric=430.0,
+            normalized_value=430.0,
+            normalized_unit_term_id=canonical_unit_id,
+            canonical_unit_term_id=None,
+            canonical_unit_symbol=None,
+        )
+
 
 def test_try_same_unit_normalization() -> None:
     canonical_unit_id = uuid4()
@@ -259,7 +283,6 @@ def test_if_match_strict_etag_parsing() -> None:
 def test_candidate_review_domain_validation() -> None:
     # pending 状态下 accept 且有证据：合法
     validate_candidate_review(current_status="pending", decision="accept", has_evidence=True)
-    validate_candidate_review(current_status="pending", decision="promote", has_evidence=True)
 
     # pending 状态下 accept 但无证据：非法
     with pytest.raises(DomainConflictError, match="必须有关联的证据片段"):
@@ -275,6 +298,12 @@ def test_candidate_review_domain_validation() -> None:
     with pytest.raises(DomainConflictError, match="已被处理，不可重复审核"):
         validate_candidate_review(current_status="rejected", decision="accept", has_evidence=True)
 
-    # 非法决定字面值
+    # 非法决定字面值（包括已废弃的 modify 和 promote）
+    with pytest.raises(DomainValidationError, match="非法的审核决定"):
+        validate_candidate_review(current_status="pending", decision="modify", has_evidence=True)
+
+    with pytest.raises(DomainValidationError, match="非法的审核决定"):
+        validate_candidate_review(current_status="pending", decision="promote", has_evidence=True)
+
     with pytest.raises(DomainValidationError, match="非法的审核决定"):
         validate_candidate_review(current_status="pending", decision="invalid_action", has_evidence=True)

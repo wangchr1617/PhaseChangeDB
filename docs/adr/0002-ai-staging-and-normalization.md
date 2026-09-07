@@ -19,14 +19,17 @@
 2. **显式人工审核晋升链路**：
    - 暴露 `POST /v1/extraction-candidates/{candidate_id}/review` 审核端点；
    - 携带 `If-Match: W/"<row_version>"` 乐观锁与 Reviewer Token 认证；
-   - 审核通过（`accept` / `promote`）时，在单一 MySQL 事务内原子创建正式 `obs_observation`（初始状态强制为 `HUMAN_REVIEWED`）、`evd_observation_link`、`ext_review` 不可变审核记录、`sys_audit_log` 审计记录与 `sys_outbox_event` 事件；
-   - 审核拒绝（`reject`）时，仅更新候选状态为 `rejected` 并写入不可变审核记录，严禁生成任何 Observation。
+   - 候选审核决策严格收敛为 `accept` 与 `reject` 两项；
+   - 审核通过（`accept`）时，支持按需携带 `corrected_payload`，并在单一 MySQL 事务内原子创建正式 `obs_observation`（初始状态强制为 `HUMAN_REVIEWED`）、`evd_observation_link`、`ext_review` 不可变审核记录、`sys_audit_log` 审计记录与 `sys_outbox_event` 事件；
+   - 审核拒绝（`reject`）时，仅更新候选状态为 `rejected` 并写入不可变审核记录，严禁生成任何 Observation，且禁止携带修正载荷（HTTP 422）。
 3. **人工录入端点收敛**：
    - `/v1/workflow/intake` 仅面向人工专家录入，其观测状态默认且强制为 `HUMAN_REVIEWED`；拒绝 `AI_EXTRACTED`、`AI_VALIDATED` 或直接标记 `VERIFIED`（HTTP 422）；
    - 严格互斥校验：`paper_id` 与 `paper` 必须且只能提供其一；`material_id` 与 `material` 必须且只能提供其一。
-4. **彻底消除隐式归一化回退**：
-   - 当调用方未提供归一化值与单位时，若原始单位与性质定义规范单位严格字面匹配，自动完成同单位规范化；否则 `normalized_value` 与 `normalized_unit_term_id` 严格保持 `NULL`，绝不盲目复制数值；
-   - 归一化字段必须成对提供且单位必须与性质定义一致，非法组合直接拒绝（HTTP 422）；
+4. **彻底消除隐式归一化与异单位伪造**：
+   - 当前 MVP 尚未集成跨单位自动换算引擎；
+   - 当调用方未提供归一化值与单位时，若原始单位与性质定义规范单位严格一致，自动完成同单位归一化；若原始单位与规范单位不一致，`normalized_value` 与 `normalized_unit_term_id` 严格保持 `NULL`，绝不盲目复制数值；
+   - 若原始单位与规范单位不一致，严禁客户端伪造传入 `normalized_*`，否则直接返回 HTTP 400（`DomainValidationError`）拒绝；
+   - 归一化字段必须成对提供且单位必须与性质定义一致，非法组合直接拒绝；
    - 使用 `Decimal` 严格保持科学有效数字精度，避免浮点数舍入偏差。
 5. **公共契约与协议加固**：
    - 文档存储协议仅开放 `s3://` 与 `https://`，公共接口拒绝 `http://` 与 `demo://`；

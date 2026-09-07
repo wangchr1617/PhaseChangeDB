@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from app.models.common import ValueKind, VerificationStatus
 from app.models.extraction import (
     CandidateObservationData,
+    CandidateReviewRequest,
     ExtractionCandidateCreateRequest,
 )
 from app.models.literature import PaperCreate
@@ -237,3 +238,49 @@ def test_extraction_candidate_request_model() -> None:
             original_value_text="150.5",
             original_unit_text="C",
         )
+
+
+def test_candidate_review_request_decisions() -> None:
+    # 1. accept 决策合法（可选带或不带 corrected_payload）
+    req_accept = CandidateReviewRequest(
+        decision="accept",
+        reviewer="Curator Alice",
+        comment="Looks good",
+    )
+    assert req_accept.decision == "accept"
+
+    req_accept_corr = CandidateReviewRequest(
+        decision="accept",
+        reviewer="Curator Alice",
+        corrected_payload={"original_value_text": "440"},
+    )
+    assert req_accept_corr.corrected_payload == {"original_value_text": "440"}
+
+    # 2. reject 决策合法（不带 corrected_payload）
+    req_reject = CandidateReviewRequest(
+        decision="reject",
+        reviewer="Curator Alice",
+        comment="Poor quality",
+    )
+    assert req_reject.decision == "reject"
+
+    # 3. reject 决策携带 corrected_payload 必须被拒绝
+    with pytest.raises(ValidationError, match="reject 决策不允许携带 corrected_payload"):
+        CandidateReviewRequest(
+            decision="reject",
+            reviewer="Curator Alice",
+            corrected_payload={"original_value_text": "440"},
+        )
+
+    # 4. modify / promote 决策必须在模型层被拒绝（422）
+    with pytest.raises(ValidationError):
+        CandidateReviewRequest(decision="modify", reviewer="Curator Alice")  # type: ignore[arg-type]
+
+    with pytest.raises(ValidationError):
+        CandidateReviewRequest(decision="promote", reviewer="Curator Alice")  # type: ignore[arg-type]
+
+    with pytest.raises(ValidationError):
+        CandidateReviewRequest(decision="MODIFY", reviewer="Curator Alice")  # type: ignore[arg-type]
+
+    with pytest.raises(ValidationError):
+        CandidateReviewRequest(decision="PROMOTE", reviewer="Curator Alice")  # type: ignore[arg-type]

@@ -1334,13 +1334,7 @@
             "type": "string",
             "enum": [
               "accept",
-              "modify",
-              "reject",
-              "promote",
-              "ACCEPT",
-              "MODIFY",
-              "REJECT",
-              "PROMOTE"
+              "reject"
             ],
             "title": "Decision"
           },

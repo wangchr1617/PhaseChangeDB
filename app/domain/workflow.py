@@ -119,13 +119,13 @@ def validate_candidate_review(
 ) -> None:
     """验证提取候选审核决定的合法性。"""
     decision_lower = decision.lower()
-    if decision_lower not in {"accept", "promote", "reject", "modify"}:
-        raise DomainValidationError(f"非法的审核决定: '{decision}'，只允许: accept, promote, reject, modify")
+    if decision_lower not in {"accept", "reject"}:
+        raise DomainValidationError(f"非法的审核决定: '{decision}'，只允许: accept, reject")
 
     if current_status != "pending":
         raise DomainConflictError(f"候选记录当前状态为 '{current_status}'，已被处理，不可重复审核")
 
-    if decision_lower in {"accept", "promote"} and not has_evidence:
+    if decision_lower == "accept" and not has_evidence:
         raise DomainConflictError("晋升为正式 Observation 必须有关联的证据片段（Evidence）")
 
 
