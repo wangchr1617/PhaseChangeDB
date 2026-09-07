@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node / Vite
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+*.tsbuildinfo
+
+# 配置与本地数据
+.env
+!.env.example
+data/
+*.log
+
+# 编辑器与系统文件
+.DS_Store
+.idea/
+.vscode/
+
+# 临时制品
+tmp/
+dist/
+build/

@@ -1,0 +1,80 @@
+{
+  "index_patterns": [
+    "pcm-papers-v1-*"
+  ],
+  "priority": 100,
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "analysis": {
+        "normalizer": {
+          "lowercase_norm": {
+            "type": "custom",
+            "filter": [
+              "lowercase"
+            ]
+          }
+        }
+      }
+    },
+    "mappings": {
+      "dynamic": "strict",
+      "properties": {
+        "paper_id": {
+          "type": "keyword"
+        },
+        "doi": {
+          "type": "keyword",
+          "normalizer": "lowercase_norm"
+        },
+        "title": {
+          "type": "text",
+          "fields": {
+            "keyword": {
+              "type": "keyword",
+              "ignore_above": 512
+            }
+          }
+        },
+        "abstract": {
+          "type": "text"
+        },
+        "journal": {
+          "type": "keyword"
+        },
+        "publication_year": {
+          "type": "short"
+        },
+        "authors": {
+          "type": "keyword"
+        },
+        "material_ids": {
+          "type": "keyword"
+        },
+        "material_formulas": {
+          "type": "keyword"
+        },
+        "property_codes": {
+          "type": "keyword"
+        },
+        "full_text_for_embedding": {
+          "type": "text",
+          "index": false
+        },
+        "embedding": {
+          "type": "dense_vector",
+          "dims": 1024,
+          "similarity": "cosine",
+          "index": true
+        },
+        "source_row_version": {
+          "type": "long"
+        },
+        "indexed_at": {
+          "type": "date"
+        }
+      }
+    }
+  }
+}

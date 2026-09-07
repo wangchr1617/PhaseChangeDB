@@ -1,0 +1,110 @@
+{
+  "index_patterns": [
+    "pcm-observations-v1-*"
+  ],
+  "priority": 100,
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "analysis": {
+        "normalizer": {
+          "lowercase_norm": {
+            "type": "custom",
+            "filter": [
+              "lowercase"
+            ]
+          }
+        }
+      }
+    },
+    "mappings": {
+      "dynamic": "strict",
+      "properties": {
+        "observation_id": {
+          "type": "keyword"
+        },
+        "sample_id": {
+          "type": "keyword"
+        },
+        "device_id": {
+          "type": "keyword"
+        },
+        "calculation_id": {
+          "type": "keyword"
+        },
+        "material_id": {
+          "type": "keyword"
+        },
+        "canonical_formula": {
+          "type": "keyword"
+        },
+        "property_id": {
+          "type": "keyword"
+        },
+        "property_code": {
+          "type": "keyword"
+        },
+        "property_name": {
+          "type": "text",
+          "fields": {
+            "keyword": {
+              "type": "keyword"
+            }
+          }
+        },
+        "normalized_value": {
+          "type": "double"
+        },
+        "normalized_unit_code": {
+          "type": "keyword"
+        },
+        "value_kind": {
+          "type": "keyword"
+        },
+        "value_text": {
+          "type": "text"
+        },
+        "phase_code": {
+          "type": "keyword"
+        },
+        "measurement_type_code": {
+          "type": "keyword"
+        },
+        "temperature_K": {
+          "type": "double"
+        },
+        "pressure_Pa": {
+          "type": "double"
+        },
+        "verification_status": {
+          "type": "keyword"
+        },
+        "quality_score": {
+          "type": "float"
+        },
+        "evidence_count": {
+          "type": "integer"
+        },
+        "paper_ids": {
+          "type": "keyword"
+        },
+        "search_text": {
+          "type": "text"
+        },
+        "embedding": {
+          "type": "dense_vector",
+          "dims": 1024,
+          "similarity": "cosine",
+          "index": true
+        },
+        "source_row_version": {
+          "type": "long"
+        },
+        "indexed_at": {
+          "type": "date"
+        }
+      }
+    }
+  }
+}

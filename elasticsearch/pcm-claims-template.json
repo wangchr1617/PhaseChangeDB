@@ -1,0 +1,72 @@
+{
+  "index_patterns": [
+    "pcm-claims-v1-*"
+  ],
+  "priority": 100,
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "analysis": {
+        "normalizer": {
+          "lowercase_norm": {
+            "type": "custom",
+            "filter": [
+              "lowercase"
+            ]
+          }
+        }
+      }
+    },
+    "mappings": {
+      "dynamic": "strict",
+      "properties": {
+        "claim_id": {
+          "type": "keyword"
+        },
+        "claim_type_code": {
+          "type": "keyword"
+        },
+        "claim_text": {
+          "type": "text"
+        },
+        "material_ids": {
+          "type": "keyword"
+        },
+        "material_formulas": {
+          "type": "keyword"
+        },
+        "property_codes": {
+          "type": "keyword"
+        },
+        "support_count": {
+          "type": "integer"
+        },
+        "contradict_count": {
+          "type": "integer"
+        },
+        "qualify_count": {
+          "type": "integer"
+        },
+        "verification_status": {
+          "type": "keyword"
+        },
+        "confidence": {
+          "type": "float"
+        },
+        "embedding": {
+          "type": "dense_vector",
+          "dims": 1024,
+          "similarity": "cosine",
+          "index": true
+        },
+        "source_row_version": {
+          "type": "long"
+        },
+        "indexed_at": {
+          "type": "date"
+        }
+      }
+    }
+  }
+}

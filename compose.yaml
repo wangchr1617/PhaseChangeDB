@@ -1,0 +1,42 @@
+services:
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-phasechangedb}
+      MYSQL_USER: ${MYSQL_USER:-phasechange}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-phasechange}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-phasechange-root}
+      TZ: UTC
+    ports:
+      - "127.0.0.1:3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./mysql:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  api:
+    build: .
+    environment:
+      PCM_APP_ENV: local
+      PCM_DATABASE_URL: mysql+asyncmy://phasechange:phasechange@mysql:3306/phasechangedb
+      PCM_CORS_ORIGINS: http://localhost:5173,http://localhost:8080
+      PCM_REVIEWER_TOKEN: ${PCM_REVIEWER_TOKEN:-reviewer-token-dev-secret-2026}
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  web:
+    build: ./frontend
+    ports:
+      - "127.0.0.1:8080:80"
+    depends_on:
+      - api
+
+volumes:
+  mysql-data:

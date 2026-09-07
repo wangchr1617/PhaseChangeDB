@@ -1,0 +1,76 @@
+{
+  "index_patterns": [
+    "pcm-materials-v1-*"
+  ],
+  "priority": 100,
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "analysis": {
+        "normalizer": {
+          "lowercase_norm": {
+            "type": "custom",
+            "filter": [
+              "lowercase"
+            ]
+          }
+        }
+      }
+    },
+    "mappings": {
+      "dynamic": "strict",
+      "properties": {
+        "material_id": {
+          "type": "keyword"
+        },
+        "canonical_formula": {
+          "type": "keyword"
+        },
+        "reduced_formula": {
+          "type": "keyword"
+        },
+        "chemical_system": {
+          "type": "keyword"
+        },
+        "name": {
+          "type": "text",
+          "fields": {
+            "keyword": {
+              "type": "keyword",
+              "ignore_above": 256
+            }
+          }
+        },
+        "aliases": {
+          "type": "search_as_you_type"
+        },
+        "family_code": {
+          "type": "keyword"
+        },
+        "elements": {
+          "type": "keyword"
+        },
+        "description": {
+          "type": "text"
+        },
+        "embedding_text": {
+          "type": "text",
+          "index": false
+        },
+        "embedding": {
+          "type": "dense_vector",
+          "dims": 1024,
+          "similarity": "cosine",
+          "index": true
+        },
+        "source_row_version": {
+          "type": "long"
+        },
+        "indexed_at": {
+          "type": "date"
+        }
+      }
+    }
+  }
+}
