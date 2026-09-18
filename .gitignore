@@ -28,3 +28,43 @@ data/
 tmp/
 dist/
 build/
+
+# 本地 PDF 文献
+papers/
+pdfs/
+literature/
+*.pdf
+
+# 文献解析数据与本地数据目录
+parsed/
+parsed_data/
+data/parsed/
+data/backups/
+data/sample_papers/
+output/
+cache/
+*.db
+*.sqlite
+*.sqlite3
+*.jsonl
+*.csv
+
+# 临时测试文件与调试脚本
+test_tmp/
+temp/
+debug/
+*.tmp
+.licenses/
+scripts/clean_and_normalize_units.py
+scripts/download_pcm_arxiv.py
+scripts/extract_arxiv_paper.py
+scripts/reingest_local_papers.py
+
+# 依赖与额外环境
+node_modules/
+venv/
+*.pyc
+
+# 环境变量与本地配置扩展
+.env.local
+*.local

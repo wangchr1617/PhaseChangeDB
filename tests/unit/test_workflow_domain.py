@@ -213,13 +213,26 @@ def test_normalization_rules() -> None:
             canonical_unit_symbol="K",
         )
 
-    # 7. 异单位归一化在 MVP 必须被拒绝（如原始 °C 与规范单位 K）
-    with pytest.raises(DomainValidationError, match="当前 MVP 尚不支持跨单位自动换算"):
+    # 7. 异单位合法跨单位换算成功（如 150 °C 换算为 423.15 K）
+    norm_c, norm_c_id = resolve_and_validate_normalization(
+        original_value_text="150",
+        original_unit_text="°C",
+        value_numeric=150.0,
+        normalized_value=423.15,
+        normalized_unit_term_id=canonical_unit_id,
+        canonical_unit_term_id=canonical_unit_id,
+        canonical_unit_symbol="K",
+    )
+    assert norm_c == Decimal("423.15")
+    assert norm_c_id == canonical_unit_id
+
+    # 若换算数值错误，拒绝
+    with pytest.raises(DomainValidationError, match="不一致"):
         resolve_and_validate_normalization(
             original_value_text="150",
             original_unit_text="°C",
             value_numeric=150.0,
-            normalized_value=423.15,
+            normalized_value=500.0,
             normalized_unit_term_id=canonical_unit_id,
             canonical_unit_term_id=canonical_unit_id,
             canonical_unit_symbol="K",

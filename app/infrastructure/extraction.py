@@ -616,30 +616,49 @@ class MySQLExtractionRepository:
                     raise EntityNotFoundError(f"指定的 material_id {material_id} 不存在")
             else:
                 assert candidate_data.material is not None
-                material_id = uuid7()
-                await self.session.execute(
-                    text(
-                        """
-                        INSERT INTO mat_material
-                          (id, canonical_formula, reduced_formula, chemical_system,
-                           material_family_term_id, name, description)
-                        VALUES (:id, :formula, :reduced, :system, :family_id, :name, :description)
-                        """
-                    ),
-                    {
-                        "id": material_id.bytes,
-                        "formula": candidate_data.material.canonical_formula,
-                        "reduced": candidate_data.material.reduced_formula,
-                        "system": candidate_data.material.chemical_system,
-                        "family_id": (
-                            candidate_data.material.material_family_term_id.bytes
-                            if candidate_data.material.material_family_term_id
-                            else None
+                existing_mat = (
+                    await self.session.execute(
+                        text(
+                            """
+                            SELECT id FROM mat_material
+                            WHERE canonical_formula = :formula AND chemical_system = :system
+                            """
                         ),
-                        "name": candidate_data.material.name,
-                        "description": candidate_data.material.description,
-                    },
-                )
+                        {
+                            "formula": candidate_data.material.canonical_formula,
+                            "system": candidate_data.material.chemical_system,
+                        },
+                    )
+                ).mappings().first()
+
+                if existing_mat:
+                    material_id = _uuid(existing_mat["id"])
+                    assert material_id is not None
+                else:
+                    material_id = uuid7()
+                    await self.session.execute(
+                        text(
+                            """
+                            INSERT INTO mat_material
+                              (id, canonical_formula, reduced_formula, chemical_system,
+                               material_family_term_id, name, description)
+                            VALUES (:id, :formula, :reduced, :system, :family_id, :name, :description)
+                            """
+                        ),
+                        {
+                            "id": material_id.bytes,
+                            "formula": candidate_data.material.canonical_formula,
+                            "reduced": candidate_data.material.reduced_formula,
+                            "system": candidate_data.material.chemical_system,
+                            "family_id": (
+                                candidate_data.material.material_family_term_id.bytes
+                                if candidate_data.material.material_family_term_id
+                                else None
+                            ),
+                            "name": candidate_data.material.name,
+                            "description": candidate_data.material.description,
+                        },
+                    )
 
             # 处理样品 (Sample)
             sample_id = uuid7()

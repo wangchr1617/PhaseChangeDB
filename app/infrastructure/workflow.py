@@ -231,43 +231,63 @@ class MySQLWorkflowRepository:
                     raise EntityNotFoundError(f"指定的 material_id {material_id} 不存在")
             else:
                 assert body.material is not None
-                material_id = uuid7()
-                await self.session.execute(
-                    text(
-                        """
-                        INSERT INTO mat_material
-                          (id, canonical_formula, reduced_formula, chemical_system,
-                           material_family_term_id, name, description)
-                        VALUES (:id, :canonical_formula, :reduced_formula, :chemical_system,
-                                :family_id, :name, :description)
-                        """
-                    ),
-                    {
-                        "id": material_id.bytes,
-                        "canonical_formula": body.material.canonical_formula,
-                        "reduced_formula": body.material.reduced_formula,
-                        "chemical_system": body.material.chemical_system,
-                        "family_id": body.material.material_family_term_id.bytes
-                        if body.material.material_family_term_id
-                        else None,
-                        "name": body.material.name,
-                        "description": body.material.description,
-                    },
-                )
-                for alias in dict.fromkeys(body.material.aliases):
+                existing_mat = (
                     await self.session.execute(
                         text(
-                            "INSERT INTO mat_material_alias (id, material_id, alias) VALUES (:id, :material_id, :alias)"
+                            """
+                            SELECT id FROM mat_material
+                            WHERE canonical_formula = :formula AND chemical_system = :system
+                            """
                         ),
-                        {"id": uuid7().bytes, "material_id": material_id.bytes, "alias": alias},
+                        {
+                            "formula": body.material.canonical_formula,
+                            "system": body.material.chemical_system,
+                        },
                     )
-                await self._outbox(
-                    event_id=uuid7(),
-                    aggregate_type="Material",
-                    aggregate_id=material_id,
-                    event_type="MaterialCreated",
-                    payload={"id": str(material_id), "formula": body.material.canonical_formula},
-                )
+                ).mappings().first()
+
+                if existing_mat:
+                    material_id = _uuid(existing_mat["id"])
+                    assert material_id is not None
+                else:
+                    material_id = uuid7()
+                    await self.session.execute(
+                        text(
+                            """
+                            INSERT INTO mat_material
+                              (id, canonical_formula, reduced_formula, chemical_system,
+                               material_family_term_id, name, description)
+                            VALUES (:id, :canonical_formula, :reduced_formula, :chemical_system,
+                                    :family_id, :name, :description)
+                            """
+                        ),
+                        {
+                            "id": material_id.bytes,
+                            "canonical_formula": body.material.canonical_formula,
+                            "reduced_formula": body.material.reduced_formula,
+                            "chemical_system": body.material.chemical_system,
+                            "family_id": body.material.material_family_term_id.bytes
+                            if body.material.material_family_term_id
+                            else None,
+                            "name": body.material.name,
+                            "description": body.material.description,
+                        },
+                    )
+                    for alias in dict.fromkeys(body.material.aliases):
+                        await self.session.execute(
+                            text(
+                                "INSERT INTO mat_material_alias (id, material_id, alias) "
+                                "VALUES (:id, :material_id, :alias)"
+                            ),
+                            {"id": uuid7().bytes, "material_id": material_id.bytes, "alias": alias},
+                        )
+                    await self._outbox(
+                        event_id=uuid7(),
+                        aggregate_type="Material",
+                        aggregate_id=material_id,
+                        event_type="MaterialCreated",
+                        payload={"id": str(material_id), "formula": body.material.canonical_formula},
+                    )
 
             # 8. 实体样品 (Sample)
             sample_id = uuid7()

@@ -29,6 +29,9 @@ class ObservationListItem(APIModel):
     property_name: str
     value: float | str | bool | None = None
     unit: str | None = None
+    normalized_value: float | str | None = None
+    normalized_unit: str | None = None
+    display_value: str | None = None
     verification_status: VerificationStatus
     quality_score: float | None = None
     created_at: datetime

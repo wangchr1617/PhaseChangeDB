@@ -19,6 +19,9 @@ class PaperCreate(APIModel):
     publisher: str | None = None
     abstract: str | None = None
     metadata: dict | None = None
+    first_author: str | None = None
+    corresponding_author: str | None = None
+    authors: list[str] = Field(default_factory=list)
 
 
 class PaperPatch(APIModel):
@@ -28,6 +31,9 @@ class PaperPatch(APIModel):
     publication_year: int | None = Field(default=None, ge=1600, le=2200)
     abstract: str | None = None
     metadata: dict | None = None
+    first_author: str | None = None
+    corresponding_author: str | None = None
+    authors: list[str] | None = None
 
 
 class PaperRead(APIModel):
@@ -42,6 +48,9 @@ class PaperRead(APIModel):
     publisher: str | None = None
     abstract: str | None = None
     metadata: dict | None = None
+    first_author: str | None = None
+    corresponding_author: str | None = None
+    authors: list[str] = Field(default_factory=list)
     row_version: int
     created_at: datetime
     updated_at: datetime

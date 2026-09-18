@@ -734,7 +734,7 @@ async def test_cross_unit_normalization_rejection_and_transaction_rollback():
                 "value_kind": "scalar",
                 "value_numeric": 150.0,
                 "original_value_text": failed_value_text,
-                "original_unit_text": "°C",
+                "original_unit_text": "eV",
                 "normalized_value": 423.15,
                 "normalized_unit_term_id": canon_unit_uuid,
                 "verification_status": "HUMAN_REVIEWED",
@@ -750,7 +750,7 @@ async def test_cross_unit_normalization_rejection_and_transaction_rollback():
             },
         )
         assert res_intake.status_code == 400
-        assert "当前 MVP 尚不支持跨单位自动换算" in res_intake.json()["detail"]
+        assert "不支持将单位" in res_intake.json()["detail"]
 
         # 3. 关键验证：数据库完全无残留！
         async with session_factory() as session:
@@ -826,7 +826,7 @@ async def test_cross_unit_normalization_rejection_and_transaction_rollback():
                 "value_kind": "scalar",
                 "value_numeric": 180.0,
                 "original_value_text": f"180_{ai_suffix}",
-                "original_unit_text": "°C",
+                "original_unit_text": "eV",
                 "normalized_value": 453.15,
                 "normalized_unit_term_id": canon_unit_uuid,
             },
@@ -850,7 +850,7 @@ async def test_cross_unit_normalization_rejection_and_transaction_rollback():
             },
         )
         assert res_ai_promote.status_code == 400
-        assert "当前 MVP 尚不支持跨单位自动换算" in res_ai_promote.json()["detail"]
+        assert "不支持将单位" in res_ai_promote.json()["detail"]
 
         # 验证数据库中候选状态仍未被晋升，且没有产生 Observation
         async with session_factory() as session:
@@ -1086,3 +1086,47 @@ async def test_server_generated_request_id_in_audit_and_response_headers():
             ).mappings().first()
             assert cand_review_audit is not None
             assert cand_review_audit["request_id"] == cand_review_req_id
+
+
+@pytest.mark.asyncio
+async def test_app_config_persistence_and_element_discovery():
+    """验证系统配置读写持久化以及材料元素动态发现与筛选接口。"""
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        # 1. 验证获取配置
+        res_cfg = await client.get("/v1/config")
+        assert res_cfg.status_code == 200
+        cfg = res_cfg.json()
+        assert "app_title" in cfg
+        assert "app_description" in cfg
+        assert "app_logo" in cfg
+
+        # 2. 更新配置并读取
+        new_title = "PhaseChangeDB Pro"
+        res_put = await client.put("/v1/config", json={"app_title": new_title})
+        assert res_put.status_code == 200
+        assert res_put.json()["app_title"] == new_title
+
+        # 重新 GET 验证持久化
+        res_get2 = await client.get("/v1/config")
+        assert res_get2.status_code == 200
+        assert res_get2.json()["app_title"] == new_title
+
+        # 恢复默认标题
+        await client.put("/v1/config", json={"app_title": "PhaseChangeDB"})
+
+        # 3. 验证元素列表获取
+        res_elem = await client.get("/v1/materials/elements")
+        assert res_elem.status_code == 200
+        elements = res_elem.json()
+        assert isinstance(elements, list)
+        # 数据库中含有 GeTe 等材料，应包含 Ge 和 Te
+        assert "Ge" in elements or "Te" in elements or "Sb" in elements
+
+        # 4. 验证按元素筛选材料
+        res_filter = await client.get("/v1/materials?elements=Ge,Te")
+        assert res_filter.status_code == 200
+        mats = res_filter.json()["items"]
+        assert len(mats) > 0
+        for m in mats:
+            assert "Ge" in m["canonical_formula"] or "Te" in m["canonical_formula"]
