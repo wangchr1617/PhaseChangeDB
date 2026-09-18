@@ -13,6 +13,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid6 import uuid7
 
+from app.domain.material_normalizer import is_valid_chemical_alias, normalize_formula
 from app.domain.workflow import (
     DomainConflictError,
     DomainValidationError,
@@ -616,24 +617,41 @@ class MySQLExtractionRepository:
                     raise EntityNotFoundError(f"指定的 material_id {material_id} 不存在")
             else:
                 assert candidate_data.material is not None
+                norm = normalize_formula(candidate_data.material.canonical_formula)
+                canonical_formula = norm.canonical_formula if norm.is_valid else candidate_data.material.canonical_formula
+                chemical_system = norm.chemical_system if norm.is_valid else candidate_data.material.chemical_system
+
                 existing_mat = (
                     await self.session.execute(
                         text(
                             """
                             SELECT id FROM mat_material
-                            WHERE canonical_formula = :formula AND chemical_system = :system
+                            WHERE canonical_formula = :formula
                             """
                         ),
-                        {
-                            "formula": candidate_data.material.canonical_formula,
-                            "system": candidate_data.material.chemical_system,
-                        },
+                        {"formula": canonical_formula},
                     )
                 ).mappings().first()
+
+                aliases_to_insert = set()
+                if (
+                    candidate_data.material.canonical_formula != canonical_formula
+                    and is_valid_chemical_alias(candidate_data.material.canonical_formula)
+                ):
+                    aliases_to_insert.add(candidate_data.material.canonical_formula)
+                aliases_to_insert.update(a for a in norm.aliases if is_valid_chemical_alias(a))
 
                 if existing_mat:
                     material_id = _uuid(existing_mat["id"])
                     assert material_id is not None
+                    for alias in aliases_to_insert:
+                        await self.session.execute(
+                            text(
+                                "INSERT IGNORE INTO mat_material_alias (id, material_id, alias) "
+                                "VALUES (:id, :material_id, :alias)"
+                            ),
+                            {"id": uuid7().bytes, "material_id": material_id.bytes, "alias": alias},
+                        )
                 else:
                     material_id = uuid7()
                     await self.session.execute(
@@ -647,18 +665,26 @@ class MySQLExtractionRepository:
                         ),
                         {
                             "id": material_id.bytes,
-                            "formula": candidate_data.material.canonical_formula,
+                            "formula": canonical_formula,
                             "reduced": candidate_data.material.reduced_formula,
-                            "system": candidate_data.material.chemical_system,
+                            "system": chemical_system,
                             "family_id": (
                                 candidate_data.material.material_family_term_id.bytes
                                 if candidate_data.material.material_family_term_id
                                 else None
                             ),
-                            "name": candidate_data.material.name,
+                            "name": candidate_data.material.name or canonical_formula,
                             "description": candidate_data.material.description,
                         },
                     )
+                    for alias in aliases_to_insert:
+                        await self.session.execute(
+                            text(
+                                "INSERT IGNORE INTO mat_material_alias (id, material_id, alias) "
+                                "VALUES (:id, :material_id, :alias)"
+                            ),
+                            {"id": uuid7().bytes, "material_id": material_id.bytes, "alias": alias},
+                        )
 
             # 处理样品 (Sample)
             sample_id = uuid7()

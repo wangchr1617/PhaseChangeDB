@@ -70,6 +70,114 @@
             "description": "逗号分隔的元素列表，如 Ge,Sb,Te"
           },
           {
+            "name": "min_tc",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "相变温度/结晶温度下限 (K)",
+              "title": "Min Tc"
+            },
+            "description": "相变温度/结晶温度下限 (K)"
+          },
+          {
+            "name": "max_tc",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "相变温度/结晶温度上限 (K)",
+              "title": "Max Tc"
+            },
+            "description": "相变温度/结晶温度上限 (K)"
+          },
+          {
+            "name": "min_latent_heat",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "潜热下限 (J/g)",
+              "title": "Min Latent Heat"
+            },
+            "description": "潜热下限 (J/g)"
+          },
+          {
+            "name": "max_latent_heat",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "潜热上限 (J/g)",
+              "title": "Max Latent Heat"
+            },
+            "description": "潜热上限 (J/g)"
+          },
+          {
+            "name": "low_toxicity",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "是否筛选低毒性材料",
+              "title": "Low Toxicity"
+            },
+            "description": "是否筛选低毒性材料"
+          },
+          {
+            "name": "cost_effective",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "是否筛选成本可控材料",
+              "title": "Cost Effective"
+            },
+            "description": "是否筛选成本可控材料"
+          },
+          {
             "name": "limit",
             "in": "query",
             "required": false,
@@ -709,6 +817,130 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/LiteratureAgentConfig"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/literature/stats": {
+      "get": {
+        "tags": [
+          "literature"
+        ],
+        "summary": "Get Literature Stats",
+        "operationId": "get_literature_stats_v1_literature_stats_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiteratureStatsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/knowledge-graph/graph": {
+      "get": {
+        "tags": [
+          "knowledge"
+        ],
+        "summary": "Get Knowledge Graph",
+        "operationId": "get_knowledge_graph_v1_knowledge_graph_graph_get",
+        "parameters": [
+          {
+            "name": "element",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Element"
+            }
+          },
+          {
+            "name": "material_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Material Id"
+            }
+          },
+          {
+            "name": "include_papers",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Include Papers"
+            }
+          },
+          {
+            "name": "subgraph",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Subgraph"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 60,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeGraphResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -1460,6 +1692,25 @@
         "additionalProperties": false,
         "type": "object",
         "title": "AppConfigUpdate"
+      },
+      "AuthorCountItem": {
+        "properties": {
+          "author": {
+            "type": "string",
+            "title": "Author"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "author",
+          "count"
+        ],
+        "title": "AuthorCountItem"
       },
       "BatchIngestItem": {
         "properties": {
@@ -2945,6 +3196,134 @@
         ],
         "title": "ExtractionStart"
       },
+      "GraphEdge": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source"
+          },
+          "target": {
+            "type": "string",
+            "title": "Target"
+          },
+          "edge_type": {
+            "type": "string",
+            "title": "Edge Type"
+          },
+          "label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Label"
+          },
+          "properties": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Properties"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "source",
+          "target",
+          "edge_type"
+        ],
+        "title": "GraphEdge"
+      },
+      "GraphNode": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "node_type": {
+            "type": "string",
+            "title": "Node Type"
+          },
+          "properties": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Properties"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "node_type"
+        ],
+        "title": "GraphNode"
+      },
+      "GraphSummary": {
+        "properties": {
+          "total_nodes": {
+            "type": "integer",
+            "title": "Total Nodes"
+          },
+          "total_edges": {
+            "type": "integer",
+            "title": "Total Edges"
+          },
+          "material_count": {
+            "type": "integer",
+            "title": "Material Count"
+          },
+          "paper_count": {
+            "type": "integer",
+            "title": "Paper Count"
+          },
+          "element_count": {
+            "type": "integer",
+            "title": "Element Count"
+          },
+          "property_count": {
+            "type": "integer",
+            "title": "Property Count"
+          },
+          "system_count": {
+            "type": "integer",
+            "title": "System Count",
+            "default": 0
+          },
+          "author_count": {
+            "type": "integer",
+            "title": "Author Count",
+            "default": 0
+          },
+          "journal_count": {
+            "type": "integer",
+            "title": "Journal Count",
+            "default": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "total_nodes",
+          "total_edges",
+          "material_count",
+          "paper_count",
+          "element_count",
+          "property_count"
+        ],
+        "title": "GraphSummary"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -2957,6 +3336,54 @@
         },
         "type": "object",
         "title": "HTTPValidationError"
+      },
+      "JournalCountItem": {
+        "properties": {
+          "journal": {
+            "type": "string",
+            "title": "Journal"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "journal",
+          "count"
+        ],
+        "title": "JournalCountItem"
+      },
+      "KnowledgeGraphResponse": {
+        "properties": {
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/GraphNode"
+            },
+            "type": "array",
+            "title": "Nodes"
+          },
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/GraphEdge"
+            },
+            "type": "array",
+            "title": "Edges"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/GraphSummary"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "nodes",
+          "edges",
+          "summary"
+        ],
+        "title": "KnowledgeGraphResponse"
       },
       "LiteratureAgentConfig": {
         "properties": {
@@ -2982,10 +3409,7 @@
             "type": "array",
             "title": "Available Models",
             "default": [
-              "gemini-2.5-pro",
-              "gemini-2.5-flash",
-              "deepseek-r1-materials",
-              "local-pcm-fine-tuned"
+              "gemini-2.5-pro"
             ]
           },
           "default_model": {
@@ -3017,6 +3441,51 @@
         "additionalProperties": false,
         "type": "object",
         "title": "LiteratureAgentConfig"
+      },
+      "LiteratureStatsResponse": {
+        "properties": {
+          "total_papers": {
+            "type": "integer",
+            "title": "Total Papers"
+          },
+          "year_distribution": {
+            "items": {
+              "$ref": "#/components/schemas/YearCountItem"
+            },
+            "type": "array",
+            "title": "Year Distribution"
+          },
+          "journal_distribution": {
+            "items": {
+              "$ref": "#/components/schemas/JournalCountItem"
+            },
+            "type": "array",
+            "title": "Journal Distribution"
+          },
+          "author_distribution": {
+            "items": {
+              "$ref": "#/components/schemas/AuthorCountItem"
+            },
+            "type": "array",
+            "title": "Author Distribution"
+          },
+          "system_distribution": {
+            "items": {
+              "$ref": "#/components/schemas/SystemCountItem"
+            },
+            "type": "array",
+            "title": "System Distribution"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "total_papers",
+          "year_distribution",
+          "journal_distribution",
+          "author_distribution"
+        ],
+        "title": "LiteratureStatsResponse"
       },
       "MaterialCreate": {
         "properties": {
@@ -3190,6 +3659,38 @@
             },
             "type": "array",
             "title": "Components"
+          },
+          "is_low_toxicity": {
+            "type": "boolean",
+            "title": "Is Low Toxicity",
+            "default": true
+          },
+          "is_cost_effective": {
+            "type": "boolean",
+            "title": "Is Cost Effective",
+            "default": true
+          },
+          "variant_count": {
+            "type": "integer",
+            "title": "Variant Count",
+            "default": 0
+          },
+          "paper_count": {
+            "type": "integer",
+            "title": "Paper Count",
+            "default": 0
+          },
+          "typical_properties": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Typical Properties"
+          },
+          "variants": {
+            "items": {
+              "$ref": "#/components/schemas/MaterialVariantRead"
+            },
+            "type": "array",
+            "title": "Variants"
           }
         },
         "additionalProperties": false,
@@ -3203,6 +3704,232 @@
           "chemical_system"
         ],
         "title": "MaterialRead"
+      },
+      "MaterialVariantRead": {
+        "properties": {
+          "sample_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Sample Id"
+          },
+          "sample_label": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sample Label"
+          },
+          "nominal_formula": {
+            "type": "string",
+            "title": "Nominal Formula"
+          },
+          "original_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Original Name"
+          },
+          "doping_element": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Doping Element"
+          },
+          "doping_concentration": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Doping Concentration"
+          },
+          "preparation_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Preparation Method"
+          },
+          "annealing_temperature": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Annealing Temperature"
+          },
+          "pressure": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pressure"
+          },
+          "test_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Test Method"
+          },
+          "crystal_phase": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Crystal Phase"
+          },
+          "atmosphere": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Atmosphere"
+          },
+          "cooling_rate": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cooling Rate"
+          },
+          "paper_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Id"
+          },
+          "paper_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Title"
+          },
+          "paper_doi": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Doi"
+          },
+          "first_author": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Author"
+          },
+          "corresponding_author": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corresponding Author"
+          },
+          "journal": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Journal"
+          },
+          "publication_year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Publication Year"
+          },
+          "observations": {
+            "items": {
+              "$ref": "#/components/schemas/VariantObservationRead"
+            },
+            "type": "array",
+            "title": "Observations"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "sample_id",
+          "nominal_formula"
+        ],
+        "title": "MaterialVariantRead"
       },
       "MeasurementIntake": {
         "properties": {
@@ -5283,6 +6010,25 @@
         ],
         "title": "SearchResponse"
       },
+      "SystemCountItem": {
+        "properties": {
+          "chemical_system": {
+            "type": "string",
+            "title": "Chemical System"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "chemical_system",
+          "count"
+        ],
+        "title": "SystemCountItem"
+      },
       "ValidationError": {
         "properties": {
           "loc": {
@@ -5334,6 +6080,75 @@
           "curve"
         ],
         "title": "ValueKind"
+      },
+      "VariantObservationRead": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Id"
+          },
+          "property_code": {
+            "type": "string",
+            "title": "Property Code"
+          },
+          "property_name": {
+            "type": "string",
+            "title": "Property Name"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          },
+          "unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Unit"
+          },
+          "display_value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Value"
+          },
+          "verification_status": {
+            "type": "string",
+            "title": "Verification Status",
+            "default": "HUMAN_REVIEWED"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "property_code",
+          "property_name"
+        ],
+        "title": "VariantObservationRead"
       },
       "VerificationStatus": {
         "type": "string",
@@ -5491,6 +6306,25 @@
           "created_at"
         ],
         "title": "WorkflowIntakeResponse"
+      },
+      "YearCountItem": {
+        "properties": {
+          "year": {
+            "type": "integer",
+            "title": "Year"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "year",
+          "count"
+        ],
+        "title": "YearCountItem"
       }
     }
   }

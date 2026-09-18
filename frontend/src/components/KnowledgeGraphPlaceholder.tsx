@@ -1,167 +1,938 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
+import type { MouseEvent, WheelEvent } from 'react'
+import type { GraphNode, KnowledgeGraphResponse } from '../types/batch'
 
-export function KnowledgeGraphPlaceholder() {
-  const [activeNode, setActiveNode] = useState<string>('Ge2Sb2Te5')
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '/api'
 
-  const nodes = [
-    { id: 'Ge2Sb2Te5', label: 'Ge₂Sb₂Te₅', type: '材料实体', desc: '经典赝二元相变存储材料，非晶-岩盐矿相快速可逆转变。', color: '#3b82f6' },
-    { id: 'PhaseTransition', label: '非晶态 ↔ 面心立方 (FCC)', type: '相转变过程', desc: '纳秒级激光/电脉冲诱导的高速相转变网络。', color: '#8b5cf6' },
-    { id: 'PropertyTc', label: '结晶温度 (Tc ~ 433 K)', type: '物理属性', desc: '相变稳定性核心指标，伴随 3 个数量级的电导率跳变。', color: '#10b981' },
-    { id: 'PCRAM', label: '神经形态存算器件 (PCRAM)', type: '器件应用', desc: '非易失性多值电导突触器件与存内计算阵列。', color: '#f59e0b' },
-    { id: 'PaperWuttig2007', label: 'Wuttig & Yamada (2007)', type: '支撑文献', desc: 'Nature Materials 奠基性相变存储综述，提供权威科学证据。', color: '#ec4899' },
-  ]
+interface KnowledgeGraphProps {
+  onSelectMaterial?: (materialId: string) => void
+  onSelectPaper?: (paperId: string) => void
+}
 
-  const currentNode = nodes.find((n) => n.id === activeNode) ?? nodes[0]
+interface SimNode extends GraphNode {
+  x: number
+  y: number
+  vx: number
+  vy: number
+  radius: number
+  color: string
+}
+
+const TYPE_CONFIG: Record<
+  string,
+  { label: string; color: string; radius: number; icon: string }
+> = {
+  material: { label: '相变材料', color: '#2563eb', radius: 24, icon: '🧪' },
+  element: { label: '构成元素', color: '#d97706', radius: 18, icon: '⚛️' },
+  system: { label: '化学体系', color: '#0891b2', radius: 20, icon: '🌐' },
+  property: { label: '物性指标', color: '#059669', radius: 19, icon: '⚡' },
+  paper: { label: '学术文献', color: '#7c3aed', radius: 21, icon: '📄' },
+  first_author: { label: '第一作者', color: '#f59e0b', radius: 18, icon: '👤' },
+  corresponding_author: { label: '通讯作者', color: '#10b981', radius: 18, icon: '✉️' },
+  author: { label: '科研作者', color: '#eab308', radius: 18, icon: '👤' },
+  journal: { label: '收录期刊', color: '#ec4899', radius: 19, icon: '📖' },
+}
+
+export function KnowledgeGraphPlaceholder({ onSelectMaterial, onSelectPaper }: KnowledgeGraphProps) {
+  const [data, setData] = useState<KnowledgeGraphResponse | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [selectedElement, setSelectedElement] = useState<string>('')
+  const [selectedNode, setSelectedNode] = useState<SimNode | null>(null)
+
+  // 知识图谱分层模式：'macro' (宏观科学骨干) vs 'literature' (材料文献与作者证据子图谱)
+  const [graphMode, setGraphMode] = useState<'macro' | 'literature'>('macro')
+  const [activeMaterial, setActiveMaterial] = useState<{ id: string; formula: string } | null>(null)
+
+  // 子图谱内的过滤条件
+  const [subgraphSearch, setSubgraphSearch] = useState('')
+  const [subgraphYearFilter, setSubgraphYearFilter] = useState<string>('')
+
+  // 节点分类过滤状态
+  const [filterTypes, setFilterTypes] = useState<Record<string, boolean>>({
+    material: true,
+    element: true,
+    system: true,
+    property: true,
+    paper: true,
+    first_author: true,
+    corresponding_author: true,
+    author: true,
+    journal: true,
+  })
+
+  // 画布变换状态：平移与缩放
+  const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1 })
+  const [isPanning, setIsPanning] = useState(false)
+  const [isPhysicsRunning, setIsPhysicsRunning] = useState(true)
+  const panStartRef = useRef({ x: 0, y: 0 })
+  const draggedNodeRef = useRef<SimNode | null>(null)
+
+  // 物理与渲染节点存储
+  const [displayNodes, setDisplayNodes] = useState<SimNode[]>([])
+  const nodesRef = useRef<SimNode[]>([])
+  const animFrameRef = useRef<number | null>(null)
+  const isRunningRef = useRef(true)
+
+  // 画布尺寸
+  const canvasWidth = 860
+  const canvasHeight = 580
+
+  // 获取后端图谱数据
+  const fetchGraphData = useCallback(async (
+    mode: 'macro' | 'literature',
+    elem?: string,
+    targetMat?: { id: string; formula: string } | null
+  ) => {
+    setLoading(true)
+    setError(null)
+    setSelectedNode(null)
+    try {
+      let url = `${API_BASE}/v1/knowledge-graph/graph?limit=80`
+      if (mode === 'literature' && targetMat) {
+        url += `&material_id=${encodeURIComponent(targetMat.id)}&subgraph=literature`
+      } else {
+        url += '&include_papers=false'
+        if (elem) {
+          url += `&element=${encodeURIComponent(elem)}`
+        }
+      }
+
+      const res = await fetch(url)
+      if (!res.ok) {
+        throw new Error(`获取图谱失败: HTTP ${res.status}`)
+      }
+      const graphData: KnowledgeGraphResponse = await res.json()
+      setData(graphData)
+
+      // 初始化力导向节点坐标（环形发散分布）
+      const count = graphData.nodes.length
+      const centerX = canvasWidth / 2
+      const centerY = canvasHeight / 2
+      const radius = Math.min(centerX, centerY) * 0.65
+
+      const simNodes: SimNode[] = graphData.nodes.map((n, i) => {
+        // 若子图谱中有材料主节点，将其置于中心
+        const isRootMat = mode === 'literature' && n.node_type === 'material'
+        const angle = (i / Math.max(count, 1)) * 2 * Math.PI
+        const typeCfg = TYPE_CONFIG[n.node_type] || TYPE_CONFIG.material
+        const jitter = (Math.random() - 0.5) * 35
+
+        return {
+          ...n,
+          x: isRootMat ? centerX : centerX + (radius + jitter) * Math.cos(angle),
+          y: isRootMat ? centerY : centerY + (radius + jitter) * Math.sin(angle),
+          vx: 0,
+          vy: 0,
+          radius: isRootMat ? 28 : typeCfg.radius,
+          color: typeCfg.color,
+        }
+      })
+
+      nodesRef.current = simNodes
+      setDisplayNodes(simNodes)
+      isRunningRef.current = true
+    } catch (err: any) {
+      setError(err.message || '知识图谱数据加载失败')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  // 监听模式或元素过滤变化重新加载
+  useEffect(() => {
+    void fetchGraphData(graphMode, selectedElement || undefined, activeMaterial)
+  }, [fetchGraphData, graphMode, selectedElement, activeMaterial])
+
+  // 切换回宏观骨干主图谱
+  const handleReturnToMacro = () => {
+    setGraphMode('macro')
+    setActiveMaterial(null)
+    setSubgraphSearch('')
+    setSubgraphYearFilter('')
+    setTransform({ x: 0, y: 0, scale: 1 })
+  }
+
+  // 下钻进入指定材料的文献证据子图谱
+  const handleExploreLiteratureSubgraph = (materialId: string, formula: string) => {
+    setActiveMaterial({ id: materialId, formula })
+    setGraphMode('literature')
+    setSubgraphSearch('')
+    setSubgraphYearFilter('')
+    setTransform({ x: 0, y: 0, scale: 1 })
+  }
+
+  // 力导向物理引擎循环
+  useEffect(() => {
+    const kRepulse = graphMode === 'literature' ? 4200 : 3400 // 库仑斥力
+    const kAttract = 0.048 // 弹簧引力
+    const kCenter = 0.016 // 向心引力
+    const damping = 0.88 // 速度阻尼
+    const defaultDist = graphMode === 'literature' ? 125 : 110
+
+    let stepCount = 0
+
+    const tick = () => {
+      if (!isRunningRef.current || !data) {
+        animFrameRef.current = requestAnimationFrame(tick)
+        return
+      }
+
+      const nodes = nodesRef.current
+      const edges = data.edges
+      const centerX = canvasWidth / 2
+      const centerY = canvasHeight / 2
+
+      // 1. 库仑斥力
+      for (let i = 0; i < nodes.length; i++) {
+        const n1 = nodes[i]
+        for (let j = i + 1; j < nodes.length; j++) {
+          const n2 = nodes[j]
+          const dx = n2.x - n1.x
+          const dy = n2.y - n1.y
+          const distSq = dx * dx + dy * dy + 100
+          const dist = Math.sqrt(distSq)
+          const force = kRepulse / distSq
+          const fx = (dx / dist) * force
+          const fy = (dy / dist) * force
+
+          if (n1 !== draggedNodeRef.current) {
+            n1.vx -= fx
+            n1.vy -= fy
+          }
+          if (n2 !== draggedNodeRef.current) {
+            n2.vx += fx
+            n2.vy += fy
+          }
+        }
+      }
+
+      // 2. 边弹簧引力
+      const nodeMap = new Map(nodes.map((n) => [n.id, n]))
+      for (const e of edges) {
+        const sourceNode = nodeMap.get(e.source)
+        const targetNode = nodeMap.get(e.target)
+        if (sourceNode && targetNode) {
+          const dx = targetNode.x - sourceNode.x
+          const dy = targetNode.y - sourceNode.y
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1
+          const displacement = dist - defaultDist
+          const force = displacement * kAttract
+          const fx = (dx / dist) * force
+          const fy = (dy / dist) * force
+
+          if (sourceNode !== draggedNodeRef.current) {
+            sourceNode.vx += fx
+            sourceNode.vy += fy
+          }
+          if (targetNode !== draggedNodeRef.current) {
+            targetNode.vx -= fx
+            targetNode.vy -= fy
+          }
+        }
+      }
+
+      // 3. 向心力与位移更新
+      let maxVelocity = 0
+      for (const n of nodes) {
+        if (n === draggedNodeRef.current) continue
+
+        // 若子图谱中的材料根节点，保持靠近中心
+        if (graphMode === 'literature' && n.node_type === 'material') {
+          n.vx += (centerX - n.x) * (kCenter * 2.5)
+          n.vy += (centerY - n.y) * (kCenter * 2.5)
+        } else {
+          n.vx += (centerX - n.x) * kCenter
+          n.vy += (centerY - n.y) * kCenter
+        }
+
+        n.vx *= damping
+        n.vy *= damping
+        n.x += n.vx
+        n.y += n.vy
+
+        // 画布边界缓冲
+        const pad = n.radius + 15
+        if (n.x < pad) {
+          n.x = pad
+          n.vx = -n.vx * 0.5
+        }
+        if (n.x > canvasWidth - pad) {
+          n.x = canvasWidth - pad
+          n.vx = -n.vx * 0.5
+        }
+        if (n.y < pad) {
+          n.y = pad
+          n.vy = -n.vy * 0.5
+        }
+        if (n.y > canvasHeight - pad) {
+          n.y = canvasHeight - pad
+          n.vy = -n.vy * 0.5
+        }
+
+        const v = Math.sqrt(n.vx * n.vx + n.vy * n.vy)
+        if (v > maxVelocity) maxVelocity = v
+      }
+
+      stepCount++
+      if (stepCount % 2 === 0 || maxVelocity < 0.15) {
+        setDisplayNodes([...nodes])
+      }
+
+      if (stepCount > 180 && maxVelocity < 0.12 && !draggedNodeRef.current) {
+        isRunningRef.current = false
+        setDisplayNodes([...nodes])
+      }
+
+      animFrameRef.current = requestAnimationFrame(tick)
+    }
+
+    animFrameRef.current = requestAnimationFrame(tick)
+    return () => {
+      if (animFrameRef.current) cancelAnimationFrame(animFrameRef.current)
+    }
+  }, [data, graphMode])
+
+  // 画布平移与缩放
+  const handleWheel = (e: WheelEvent) => {
+    e.preventDefault()
+    const zoomFactor = e.deltaY < 0 ? 1.08 : 0.92
+    setTransform((prev) => {
+      const newScale = Math.min(2.5, Math.max(0.4, prev.scale * zoomFactor))
+      return { ...prev, scale: newScale }
+    })
+  }
+
+  const handleMouseDown = (e: MouseEvent) => {
+    if (e.target === e.currentTarget || (e.target as HTMLElement).tagName === 'svg') {
+      setIsPanning(true)
+      panStartRef.current = { x: e.clientX - transform.x, y: e.clientY - transform.y }
+    }
+  }
+
+  const handleMouseMove = (e: MouseEvent) => {
+    if (isPanning) {
+      setTransform((prev) => ({
+        ...prev,
+        x: e.clientX - panStartRef.current.x,
+        y: e.clientY - panStartRef.current.y,
+      }))
+    } else if (draggedNodeRef.current) {
+      const svgRect = e.currentTarget.getBoundingClientRect()
+      const mouseX = (e.clientX - svgRect.left - transform.x) / transform.scale
+      const mouseY = (e.clientY - svgRect.top - transform.y) / transform.scale
+      draggedNodeRef.current.x = mouseX
+      draggedNodeRef.current.y = mouseY
+      setDisplayNodes([...nodesRef.current])
+      isRunningRef.current = true
+    }
+  }
+
+  const handleMouseUp = () => {
+    setIsPanning(false)
+    draggedNodeRef.current = null
+  }
+
+  const handleNodeMouseDown = (e: MouseEvent, node: SimNode) => {
+    e.stopPropagation()
+    draggedNodeRef.current = node
+    setSelectedNode(node)
+    isRunningRef.current = true
+  }
+
+  const resetView = () => {
+    setTransform({ x: 0, y: 0, scale: 1 })
+    isRunningRef.current = true
+  }
+
+  const toggleTypeFilter = (t: string) => {
+    setFilterTypes((prev) => ({ ...prev, [t]: !prev[t] }))
+  }
+
+  // 子图谱年份选项
+  const availableYears = useMemo(() => {
+    if (!data || graphMode !== 'literature') return []
+    const years = new Set<number>()
+    for (const n of data.nodes) {
+      if (n.node_type === 'paper' && n.properties?.year) {
+        years.add(Number(n.properties.year))
+      }
+    }
+    return Array.from(years).sort((a, b) => b - a)
+  }, [data, graphMode])
+
+  // 过滤后的可视化节点和边
+  const visibleNodes = displayNodes.filter((n) => {
+    // 1. 类型开关过滤
+    if (!filterTypes[n.node_type]) return false
+
+    // 2. 子图谱文字搜索过滤
+    if (graphMode === 'literature' && subgraphSearch.trim()) {
+      const q = subgraphSearch.toLowerCase().trim()
+      const matchLabel = n.label.toLowerCase().includes(q)
+      const matchTitle = String(n.properties?.title || '').toLowerCase().includes(q)
+      const matchAuthor = String(n.properties?.first_author || '').toLowerCase().includes(q)
+      const matchName = String(n.properties?.name || '').toLowerCase().includes(q)
+      if (!matchLabel && !matchTitle && !matchAuthor && !matchName) return false
+    }
+
+    // 3. 子图谱年份过滤
+    if (graphMode === 'literature' && subgraphYearFilter) {
+      if (n.node_type === 'paper') {
+        if (String(n.properties?.year) !== subgraphYearFilter) return false
+      }
+    }
+
+    return true
+  })
+
+  const visibleNodeIds = new Set(visibleNodes.map((n) => n.id))
+  const visibleEdges = (data?.edges || []).filter(
+    (e) => visibleNodeIds.has(e.source) && visibleNodeIds.has(e.target)
+  )
+
+  const nodeMap = new Map(displayNodes.map((n) => [n.id, n]))
 
   return (
     <div className="knowledge-graph-container">
+      {/* 顶部控制栏与分层导航 */}
       <div className="kg-header-card">
-        <div className="kg-badge">
-          <span className="pulsing-dot" />
-          <span>下一代功能规划 · Neo4j 图数据库拓扑投影</span>
+        <div className="kg-header-row">
+          <div>
+            <div className="kg-badge">
+              <span className="pulsing-dot" />
+              <span>
+                {graphMode === 'macro'
+                  ? '宏观科学骨干知识网络 (Core Macro Graph)'
+                  : `文献与作者证据子图谱 (Evidence Subgraph) · ${activeMaterial?.formula}`}
+              </span>
+            </div>
+            <h2>
+              {graphMode === 'macro'
+                ? '相变存储材料多维科学知识图谱'
+                : `材料 [${activeMaterial?.formula}] 的文献出处与作者星丛拓扑`}
+            </h2>
+            <p className="kg-subtitle">
+              {graphMode === 'macro'
+                ? '聚焦材料实体、化学元素体系与标准物性指标的核心拓扑；文献作为专属证据层按需展开，杜绝节点平铺爆炸。'
+                : '以该材料为核心，同级展示关联学术文献、第一作者、通讯作者及收录期刊，实现科研证据的严谨溯源。'}
+            </p>
+          </div>
+
+          {data && (
+            <div className="kg-summary-badges">
+              <span className="kg-tag material">材料: {data.summary.material_count}</span>
+              {graphMode === 'macro' ? (
+                <>
+                  <span className="kg-tag element">元素: {data.summary.element_count}</span>
+                  <span className="kg-tag property">物性: {data.summary.property_count}</span>
+                  {data.summary.system_count ? (
+                    <span className="kg-tag system">体系: {data.summary.system_count}</span>
+                  ) : null}
+                </>
+              ) : (
+                <>
+                  <span className="kg-tag paper">文献: {data.summary.paper_count}</span>
+                  <span className="kg-tag author">作者: {data.summary.author_count}</span>
+                  <span className="kg-tag journal">期刊: {data.summary.journal_count}</span>
+                </>
+              )}
+            </div>
+          )}
         </div>
-        <h2>相变材料科学知识图谱 (Knowledge Graph)</h2>
-        <p className="kg-subtitle">
-          基于证据链与本体语义网络的材料-相态-物性-器件多维图谱。当前模块处于受控建设中，已完成模式设计与 Cypher 投影契约。
-        </p>
       </div>
 
-      <div className="kg-main-layout">
-        {/* 图谱模拟拓扑网络视窗 */}
-        <div className="kg-graph-canvas">
-          <div className="kg-canvas-hint">
-            <span>🕸️ 交互式图谱拓扑预览（点击节点查看知识关系定义）</span>
+      {/* 控制与筛选工具条 */}
+      <div className="kg-toolbar">
+        {graphMode === 'literature' ? (
+          <>
+            <div className="toolbar-group">
+              <button className="button small primary" onClick={handleReturnToMacro}>
+                ⬅️ 返回全局宏观图谱
+              </button>
+            </div>
+            <div className="toolbar-group">
+              <span className="tool-label">🔎 搜索证据：</span>
+              <input
+                type="text"
+                className="input small"
+                placeholder="搜索文献标题或作者..."
+                value={subgraphSearch}
+                onChange={(e) => setSubgraphSearch(e.target.value)}
+                style={{ width: 160, padding: '4px 8px', fontSize: 12 }}
+              />
+            </div>
+            {availableYears.length > 0 && (
+              <div className="toolbar-group">
+                <span className="tool-label">📅 发表年份：</span>
+                <select
+                  value={subgraphYearFilter}
+                  onChange={(e) => setSubgraphYearFilter(e.target.value)}
+                  style={{ padding: '3px 8px', fontSize: 12, borderRadius: 4 }}
+                >
+                  <option value="">全部年份</option>
+                  {availableYears.map((y) => (
+                    <option key={y} value={String(y)}>
+                      {y} 年
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="toolbar-group">
+            <span className="tool-label">🔍 元素子图：</span>
+            {['', 'Ge', 'Sb', 'Te', 'Se', 'Bi', 'In'].map((el) => (
+              <button
+                key={el}
+                className={`button small ${selectedElement === el ? 'primary' : 'secondary'}`}
+                onClick={() => setSelectedElement(el)}
+              >
+                {el === '' ? '全部' : el}
+              </button>
+            ))}
           </div>
+        )}
 
-          <svg className="kg-svg" viewBox="0 0 700 420">
-            <defs>
-              <linearGradient id="linkGrad1" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.6" />
-                <stop offset="100%" stopColor="#8b5cf6" stopOpacity="0.6" />
-              </linearGradient>
-              <linearGradient id="linkGrad2" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.6" />
-                <stop offset="100%" stopColor="#10b981" stopOpacity="0.6" />
-              </linearGradient>
-              <linearGradient id="linkGrad3" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stopColor="#8b5cf6" stopOpacity="0.6" />
-                <stop offset="100%" stopColor="#f59e0b" stopOpacity="0.6" />
-              </linearGradient>
-              <linearGradient id="linkGrad4" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stopColor="#3b82f6" stopOpacity="0.6" />
-                <stop offset="100%" stopColor="#ec4899" stopOpacity="0.6" />
-              </linearGradient>
-            </defs>
-
-            {/* 连线 */}
-            <line x1="350" y1="210" x2="160" y2="120" stroke="url(#linkGrad1)" strokeWidth="3" strokeDasharray="5,5" className="flowing-edge" />
-            <line x1="350" y1="210" x2="540" y2="120" stroke="url(#linkGrad2)" strokeWidth="3" strokeDasharray="5,5" className="flowing-edge" />
-            <line x1="160" y1="120" x2="200" y2="330" stroke="url(#linkGrad3)" strokeWidth="2.5" />
-            <line x1="350" y1="210" x2="490" y2="330" stroke="url(#linkGrad4)" strokeWidth="2.5" />
-
-            {/* 关系标签 */}
-            <text x="240" y="150" fill="#94a3b8" fontSize="12" textAnchor="middle">HAS_PHASE</text>
-            <text x="460" y="150" fill="#94a3b8" fontSize="12" textAnchor="middle">EXHIBITS_PROPERTY</text>
-            <text x="160" y="240" fill="#94a3b8" fontSize="12" textAnchor="middle">APPLIED_IN</text>
-            <text x="440" y="280" fill="#94a3b8" fontSize="12" textAnchor="middle">EVIDENCE_FROM</text>
-
-            {/* 节点 1: 中心材料 */}
-            <g
-              className={`kg-node ${activeNode === 'Ge2Sb2Te5' ? 'active-node' : ''}`}
-              onClick={() => setActiveNode('Ge2Sb2Te5')}
-              transform="translate(350, 210)"
-            >
-              <circle r="44" fill="#1e293b" stroke="#3b82f6" strokeWidth="4" />
-              <text y="-5" fill="#f8fafc" fontSize="14" fontWeight="bold" textAnchor="middle">Ge₂Sb₂Te₅</text>
-              <text y="15" fill="#93c5fd" fontSize="11" textAnchor="middle">核心材料</text>
-            </g>
-
-            {/* 节点 2: 相态转变 */}
-            <g
-              className={`kg-node ${activeNode === 'PhaseTransition' ? 'active-node' : ''}`}
-              onClick={() => setActiveNode('PhaseTransition')}
-              transform="translate(160, 120)"
-            >
-              <circle r="36" fill="#1e293b" stroke="#8b5cf6" strokeWidth="3" />
-              <text y="-3" fill="#f8fafc" fontSize="12" fontWeight="bold" textAnchor="middle">相态网络</text>
-              <text y="14" fill="#c4b5fd" fontSize="10" textAnchor="middle">FCC ↔ Amorph</text>
-            </g>
-
-            {/* 节点 3: 物理属性 */}
-            <g
-              className={`kg-node ${activeNode === 'PropertyTc' ? 'active-node' : ''}`}
-              onClick={() => setActiveNode('PropertyTc')}
-              transform="translate(540, 120)"
-            >
-              <circle r="36" fill="#1e293b" stroke="#10b981" strokeWidth="3" />
-              <text y="-3" fill="#f8fafc" fontSize="12" fontWeight="bold" textAnchor="middle">Tc 结晶温度</text>
-              <text y="14" fill="#6ee7b7" fontSize="10" textAnchor="middle">433 K 观测点</text>
-            </g>
-
-            {/* 节点 4: 器件应用 */}
-            <g
-              className={`kg-node ${activeNode === 'PCRAM' ? 'active-node' : ''}`}
-              onClick={() => setActiveNode('PCRAM')}
-              transform="translate(200, 330)"
-            >
-              <circle r="34" fill="#1e293b" stroke="#f59e0b" strokeWidth="3" />
-              <text y="-3" fill="#f8fafc" fontSize="12" fontWeight="bold" textAnchor="middle">PCRAM 单元</text>
-              <text y="14" fill="#fcd34d" fontSize="10" textAnchor="middle">存算应用</text>
-            </g>
-
-            {/* 节点 5: 支撑文献 */}
-            <g
-              className={`kg-node ${activeNode === 'PaperWuttig2007' ? 'active-node' : ''}`}
-              onClick={() => setActiveNode('PaperWuttig2007')}
-              transform="translate(490, 330)"
-            >
-              <circle r="34" fill="#1e293b" stroke="#ec4899" strokeWidth="3" />
-              <text y="-3" fill="#f8fafc" fontSize="12" fontWeight="bold" textAnchor="middle">科学文献</text>
-              <text y="14" fill="#f472b6" fontSize="10" textAnchor="middle">Nat. Mater.</text>
-            </g>
-          </svg>
+        {/* 节点分类显示开关 */}
+        <div className="toolbar-group">
+          <span className="tool-label">节点类型：</span>
+          {(graphMode === 'macro'
+            ? ['material', 'element', 'system', 'property']
+            : ['material', 'paper', 'first_author', 'corresponding_author', 'journal']
+          ).map((typeKey) => {
+            const cfg = TYPE_CONFIG[typeKey]
+            if (!cfg) return null
+            return (
+              <label key={typeKey} className="type-toggle-label">
+                <input
+                  type="checkbox"
+                  checked={filterTypes[typeKey] ?? true}
+                  onChange={() => toggleTypeFilter(typeKey)}
+                />
+                <span className="dot-indicator" style={{ backgroundColor: cfg.color }} />
+                {cfg.label}
+              </label>
+            )
+          })}
         </div>
 
-        {/* 右侧：节点详细与建设进展说明卡片 */}
-        <div className="kg-info-panel">
-          <div className="kg-selected-card" style={{ borderColor: currentNode.color }}>
-            <span className="kg-type-tag" style={{ backgroundColor: `${currentNode.color}22`, color: currentNode.color }}>
-              {currentNode.type}
-            </span>
-            <h3>{currentNode.label}</h3>
-            <p>{currentNode.desc}</p>
-          </div>
+        <div className="toolbar-group right">
+          <button className="button small secondary" onClick={resetView} title="重置画布平移与缩放">
+            🎯 重置视角
+          </button>
+          <button
+            className="button small secondary"
+            onClick={() => {
+              const nextState = !isRunningRef.current
+              isRunningRef.current = nextState
+              setIsPhysicsRunning(nextState)
+            }}
+          >
+            {isPhysicsRunning ? '⏸️ 锁定物理' : '▶️ 恢复力场'}
+          </button>
+          <button
+            className="button small secondary"
+            onClick={() => void fetchGraphData(graphMode, selectedElement || undefined, activeMaterial)}
+          >
+            🔄 刷新
+          </button>
+        </div>
+      </div>
 
-          <div className="kg-roadmap-card">
-            <h4>🚀 知识图谱功能建设规划 (Roadmap)</h4>
-            <ul className="kg-roadmap-list">
-              <li className="done">
-                <span className="step-icon">✓</span>
-                <div>
-                  <strong>模式与本体模型定义 (v0.1)</strong>
-                  <p>完成 MySQL 权威关系建模、UUIDv7 规范以及 Neo4j 节点/边标签规约。</p>
-                </div>
-              </li>
-              <li className="in-progress">
-                <span className="step-icon">⟳</span>
-                <div>
-                  <strong>Outbox 事件驱动异步投影 (v0.2)</strong>
-                  <p>通过 Outbox 队列异步流式将材料与证据链增量投影至图存储，确保 MySQL 主库零性能开销与故障隔离。</p>
-                </div>
-              </li>
-              <li className="planned">
-                <span className="step-icon">⏱</span>
-                <div>
-                  <strong>Cypher 图遍历与多跳推断 (v0.3 规划中)</strong>
-                  <p>上线前端可视化图谱探索器，支持成分-相变势垒-器件寿命的全链条多跳因果推断与逆向材料设计。</p>
-                </div>
-              </li>
-            </ul>
-
-            <div className="kg-action-box">
-              <span className="kg-hint">您可以通过文献解析智能体或批量上传功能，为知识图谱持续注入经过证据核验的高质量数据源。</span>
+      {/* 主视窗：力导向图 + 侧边详情 */}
+      <div className="kg-main-layout">
+        <div
+          className="kg-graph-canvas interactive-canvas"
+          onWheel={handleWheel}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+        >
+          {loading && (
+            <div className="canvas-overlay loading">
+              <div className="spinner-large" />
+              <p>
+                {graphMode === 'macro'
+                  ? '正在从 MySQL 权威数据源构建科学宏观图谱…'
+                  : `正在构建 ${activeMaterial?.formula} 的文献与作者证据拓扑…`}
+              </p>
             </div>
+          )}
+
+          {error && (
+            <div className="canvas-overlay error">
+              <p className="error-text">⚠️ {error}</p>
+              <button
+                className="button secondary"
+                onClick={() => void fetchGraphData(graphMode, selectedElement || undefined, activeMaterial)}
+              >
+                重试
+              </button>
+            </div>
+          )}
+
+          {!loading && !error && visibleNodes.length === 0 && (
+            <div className="canvas-overlay empty">
+              <p>暂无符合当前筛选条件的图谱节点</p>
+              <button
+                className="button secondary"
+                onClick={() => {
+                  setSelectedElement('')
+                  setSubgraphSearch('')
+                  setSubgraphYearFilter('')
+                  setFilterTypes({
+                    material: true,
+                    element: true,
+                    system: true,
+                    property: true,
+                    paper: true,
+                    first_author: true,
+                    corresponding_author: true,
+                    author: true,
+                    journal: true,
+                  })
+                }}
+              >
+                重置所有筛选
+              </button>
+            </div>
+          )}
+
+          {/* SVG 力导向图层 */}
+          <svg className="kg-svg-active" viewBox={`0 0 ${canvasWidth} ${canvasHeight}`}>
+            <g transform={`translate(${transform.x}, ${transform.y}) scale(${transform.scale})`}>
+              {/* 关系连线 */}
+              {visibleEdges.map((e) => {
+                const s = nodeMap.get(e.source)
+                const t = nodeMap.get(e.target)
+                if (!s || !t) return null
+
+                const isEdgeActive =
+                  selectedNode && (selectedNode.id === e.source || selectedNode.id === e.target)
+
+                let strokeColor = '#cbd5e1'
+                if (isEdgeActive) {
+                  strokeColor = '#2563eb'
+                } else if (e.edge_type === 'EVIDENCED_BY') {
+                  strokeColor = '#a78bfa'
+                } else if (e.edge_type === 'FIRST_AUTHORED_BY') {
+                  strokeColor = '#fcd34d'
+                } else if (e.edge_type === 'CORRESPONDING_AUTHORED_BY') {
+                  strokeColor = '#6ee7b7'
+                } else if (e.edge_type === 'PUBLISHED_IN') {
+                  strokeColor = '#f472b6'
+                }
+
+                return (
+                  <g key={e.id} className={`edge-group ${isEdgeActive ? 'active' : ''}`}>
+                    <line
+                      x1={s.x}
+                      y1={s.y}
+                      x2={t.x}
+                      y2={t.y}
+                      stroke={strokeColor}
+                      strokeWidth={isEdgeActive ? 2.5 : 1.4}
+                      strokeDasharray={
+                        e.edge_type === 'EVIDENCED_BY' || e.edge_type === 'MENTIONS'
+                          ? '4 3'
+                          : undefined
+                      }
+                    />
+                    {e.label && (
+                      <text
+                        x={(s.x + t.x) / 2}
+                        y={(s.y + t.y) / 2 - 4}
+                        textAnchor="middle"
+                        fontSize={9}
+                        fill="#94a3b8"
+                        className="edge-label-text"
+                      >
+                        {e.label}
+                      </text>
+                    )}
+                  </g>
+                )
+              })}
+
+              {/* 实体节点 */}
+              {visibleNodes.map((n) => {
+                const isSelected = selectedNode?.id === n.id
+                const cfg = TYPE_CONFIG[n.node_type] || TYPE_CONFIG.material
+
+                return (
+                  <g
+                    key={n.id}
+                    className={`node-group ${isSelected ? 'selected' : ''}`}
+                    transform={`translate(${n.x}, ${n.y})`}
+                    onMouseDown={(e) => handleNodeMouseDown(e, n)}
+                    style={{ cursor: 'grab' }}
+                  >
+                    {isSelected && (
+                      <circle
+                        r={n.radius + 7}
+                        fill="none"
+                        stroke={n.color}
+                        strokeWidth={3}
+                        strokeDasharray="4 2"
+                        className="selection-halo"
+                      />
+                    )}
+
+                    <circle
+                      r={n.radius}
+                      fill={n.color}
+                      className="node-circle"
+                      stroke="#ffffff"
+                      strokeWidth={2}
+                    />
+
+                    <text
+                      textAnchor="middle"
+                      dy="4"
+                      fontSize={n.radius * 0.75}
+                      fill="#ffffff"
+                      style={{ pointerEvents: 'none' }}
+                    >
+                      {cfg.icon}
+                    </text>
+
+                    <text
+                      textAnchor="middle"
+                      dy={n.radius + 14}
+                      fontSize={11}
+                      fontWeight={isSelected ? 'bold' : '500'}
+                      fill={isSelected ? '#1e3a8a' : '#334155'}
+                      className="node-label-bg"
+                    >
+                      {n.label}
+                    </text>
+                  </g>
+                )
+              })}
+            </g>
+          </svg>
+
+          {/* 画布操作提示 */}
+          <div className="canvas-controls-hint">
+            <span>
+              💡 鼠标滚轮缩放 · 拖拽画布平移 · 单击节点查看属性与证据 · 点击材料可下钻文献子图谱
+            </span>
           </div>
+        </div>
+
+        {/* 右侧节点详情抽屉 / 检查器 */}
+        <div className="kg-side-panel">
+          {selectedNode ? (
+            <div className="node-detail-card">
+              <div className="detail-head" style={{ borderLeftColor: selectedNode.color }}>
+                <span className="type-badge" style={{ backgroundColor: selectedNode.color }}>
+                  {TYPE_CONFIG[selectedNode.node_type]?.label || selectedNode.node_type}
+                </span>
+                <h3>{selectedNode.label}</h3>
+              </div>
+
+              <div className="detail-props">
+                {selectedNode.node_type === 'material' && (
+                  <>
+                    <div className="prop-row">
+                      <span className="label">化学系统：</span>
+                      <span className="val">{String(selectedNode.properties?.chemical_system || '—')}</span>
+                    </div>
+                    <div className="prop-row">
+                      <span className="label">材料名称：</span>
+                      <span className="val">{String(selectedNode.properties?.name || selectedNode.label)}</span>
+                    </div>
+
+                    <div className="action-row" style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 12 }}>
+                      {graphMode === 'macro' && Boolean(selectedNode.properties?.material_id) && (
+                        <button
+                          className="button small primary"
+                          onClick={() =>
+                            handleExploreLiteratureSubgraph(
+                              String(selectedNode.properties?.material_id),
+                              selectedNode.label
+                            )
+                          }
+                        >
+                          🔬 展开文献与作者证据子图谱
+                        </button>
+                      )}
+                      {Boolean(selectedNode.properties?.material_id && onSelectMaterial) && (
+                        <button
+                          className="button small secondary"
+                          onClick={() => onSelectMaterial?.(String(selectedNode.properties?.material_id))}
+                        >
+                          🧪 查看材料完整详情
+                        </button>
+                      )}
+                    </div>
+                  </>
+                )}
+
+                {selectedNode.node_type === 'element' && (
+                  <>
+                    <div className="prop-row">
+                      <span className="label">元素符号：</span>
+                      <span className="val font-mono">{String(selectedNode.properties?.symbol || selectedNode.label)}</span>
+                    </div>
+                    <div className="prop-row">
+                      <span className="label">科学角色：</span>
+                      <span className="val">相变基本骨干元素</span>
+                    </div>
+                  </>
+                )}
+
+                {selectedNode.node_type === 'system' && (
+                  <>
+                    <div className="prop-row">
+                      <span className="label">体系分类：</span>
+                      <span className="val font-mono">{String(selectedNode.properties?.chemical_system || selectedNode.label)}</span>
+                    </div>
+                    <div className="prop-row">
+                      <span className="label">体系说明：</span>
+                      <span className="val">多元相变材料化学体系，控制晶化速度与能带结构</span>
+                    </div>
+                  </>
+                )}
+
+                {selectedNode.node_type === 'paper' && (
+                  <>
+                    <div className="prop-row">
+                      <span className="label">文献标题：</span>
+                      <span className="val text-small">{String(selectedNode.properties?.title || selectedNode.label)}</span>
+                    </div>
+                    <div className="prop-row">
+                      <span className="label">收录期刊：</span>
+                      <span className="val">{String(selectedNode.properties?.journal || '—')}</span>
+                    </div>
+                    <div className="prop-row">
+                      <span className="label">第一作者：</span>
+                      <span className="val">{String(selectedNode.properties?.first_author || '—')}</span>
+                    </div>
+                    <div className="prop-row">
+                      <span className="label">通讯作者：</span>
+                      <span className="val">{String(selectedNode.properties?.corresponding_author || '—')}</span>
+                    </div>
+                    {selectedNode.properties?.year && (
+                      <div className="prop-row">
+                        <span className="label">出版年份：</span>
+                        <span className="val">{String(selectedNode.properties.year)} 年</span>
+                      </div>
+                    )}
+                    {selectedNode.properties?.doi && (
+                      <div className="prop-row">
+                        <span className="label">DOI：</span>
+                        <a
+                          href={`https://doi.org/${selectedNode.properties.doi}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="val link"
+                        >
+                          {String(selectedNode.properties.doi)} ↗
+                        </a>
+                      </div>
+                    )}
+                    {selectedNode.properties?.paper_id && onSelectPaper && (
+                      <div className="action-row" style={{ marginTop: 10 }}>
+                        <button
+                          className="button small secondary"
+                          onClick={() => onSelectPaper(String(selectedNode.properties?.paper_id))}
+                        >
+                          📄 查看文献详情
+                        </button>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {(selectedNode.node_type === 'first_author' ||
+                  selectedNode.node_type === 'corresponding_author' ||
+                  selectedNode.node_type === 'author') && (
+                  <>
+                    <div className="prop-row">
+                      <span className="label">作者姓名：</span>
+                      <span className="val font-semibold">{String(selectedNode.properties?.name || selectedNode.label)}</span>
+                    </div>
+                    <div className="prop-row">
+                      <span className="label">署名角色：</span>
+                      <span className="val">{String(selectedNode.properties?.role || '科研工作者')}</span>
+                    </div>
+                    <div className="prop-row">
+                      <span className="label">证据地位：</span>
+                      <span className="val">与文献同处于微观证据层，直接对研究结果与测量精度负责</span>
+                    </div>
+                  </>
+                )}
+
+                {selectedNode.node_type === 'journal' && (
+                  <>
+                    <div className="prop-row">
+                      <span className="label">期刊名称：</span>
+                      <span className="val font-semibold">{String(selectedNode.properties?.name || selectedNode.label)}</span>
+                    </div>
+                    <div className="prop-row">
+                      <span className="label">出版载体：</span>
+                      <span className="val">学术期刊 / 国际会议 / arXiv 预印本</span>
+                    </div>
+                  </>
+                )}
+
+                {selectedNode.node_type === 'property' && (
+                  <>
+                    <div className="prop-row">
+                      <span className="label">属性定义：</span>
+                      <span className="val">{String(selectedNode.properties?.property_name || selectedNode.label)}</span>
+                    </div>
+                    <div className="prop-row">
+                      <span className="label">规范单位：</span>
+                      <span className="val font-mono">{String(selectedNode.properties?.canonical_unit || '—')}</span>
+                    </div>
+                    {selectedNode.properties?.sample_value && (
+                      <div className="prop-row">
+                        <span className="label">测定观测：</span>
+                        <span className="val highlight">{String(selectedNode.properties.sample_value)}</span>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+
+              {/* 关联拓扑 */}
+              <div className="node-neighbors">
+                <h4>🔗 关联拓扑 (Connections)</h4>
+                <div className="neighbors-list">
+                  {data?.edges
+                    .filter((e) => e.source === selectedNode.id || e.target === selectedNode.id)
+                    .map((e) => {
+                      const otherId = e.source === selectedNode.id ? e.target : e.source
+                      const other = nodeMap.get(otherId)
+                      return (
+                        <div
+                          key={e.id}
+                          className="neighbor-item"
+                          onClick={() => other && setSelectedNode(other)}
+                        >
+                          <span className="relation-type">[{e.label || e.edge_type}]</span>
+                          <span className="relation-target">{other?.label || otherId}</span>
+                        </div>
+                      )
+                    })}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="kg-side-empty">
+              <div className="empty-icon">🕸️</div>
+              <h4>节点属性检查器</h4>
+              <p>
+                {graphMode === 'macro'
+                  ? '在左侧宏观骨干图中点击任意材料节点，可在此查看材料详情并展开该材料的文献与作者证据子图谱。'
+                  : '在左侧文献证据子图谱中点击文献、第一作者、通讯作者或期刊节点，查看科学事实溯源链。'}
+              </p>
+            </div>
+          )}
         </div>
       </div>
     </div>

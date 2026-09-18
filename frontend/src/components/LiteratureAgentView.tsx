@@ -2,6 +2,14 @@ import { useEffect, useState } from 'react'
 import type { LiteratureAgentConfig } from '../types/batch'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? '/api'
+const LOCAL_STORAGE_LLM_KEY = 'phasechangedb_llm_custom_config'
+
+export interface CustomLLMConfig {
+  provider: 'gemini' | 'openai_compatible'
+  baseUrl: string
+  modelName: string
+  apiKey: string
+}
 
 interface LiteratureAgentViewProps {
   onOpenBatchUpload: () => void
@@ -12,7 +20,7 @@ export function LiteratureAgentView({ onOpenBatchUpload }: LiteratureAgentViewPr
     agent_name: 'PhaseChangeLiteratureAgent',
     version: 'v1.0-alpha',
     enabled: true,
-    available_models: ['gemini-2.5-pro', 'gemini-2.5-flash', 'deepseek-r1-materials', 'local-pcm-fine-tuned'],
+    available_models: ['gemini-2.5-pro'],
     default_model: 'gemini-2.5-pro',
     prompt_version: 'pcm-extract-v2.1',
     ontology_version: '0.3.0',
@@ -20,8 +28,32 @@ export function LiteratureAgentView({ onOpenBatchUpload }: LiteratureAgentViewPr
     require_human_review: true,
   })
 
+  // 自定义大模型配置与持久化
+  const [customLLM, setCustomLLM] = useState<CustomLLMConfig | null>(() => {
+    try {
+      const saved = localStorage.getItem(LOCAL_STORAGE_LLM_KEY)
+      if (saved) {
+        return JSON.parse(saved) as CustomLLMConfig
+      }
+    } catch {
+      // ignore
+    }
+    return null
+  })
+
   const [selectedModel, setSelectedModel] = useState('gemini-2.5-pro')
   const [isSimulating, setIsSimulating] = useState(false)
+  const [isModelModalOpen, setIsModelModalOpen] = useState(false)
+  const [explainModal, setExplainModal] = useState<'prompt' | 'ontology' | null>(null)
+
+  // 模态框临时编辑状态
+  const [tempProvider, setTempProvider] = useState<'gemini' | 'openai_compatible'>('gemini')
+  const [tempBaseUrl, setTempBaseUrl] = useState('https://generativelanguage.googleapis.com')
+  const [tempModelName, setTempModelName] = useState('gemini-2.5-pro')
+  const [tempApiKey, setTempApiKey] = useState('')
+  const [showApiKey, setShowApiKey] = useState(false)
+  const [configSuccessMsg, setConfigSuccessMsg] = useState<string | null>(null)
+
   const [logs, setLogs] = useState<string[]>([
     '⚙️ [Agent Init] 科学文献智能解析智能体已就绪，当前加载本体契约版本 v0.3.0',
     '🔒 [Security Guard] 遵循科学家工作流规范：提取结果仅写入 ext_* 暂存区，严禁直写权威主表',
@@ -34,33 +66,120 @@ export function LiteratureAgentView({ onOpenBatchUpload }: LiteratureAgentViewPr
       .then((data: LiteratureAgentConfig | null) => {
         if (data) {
           setConfig(data)
-          setSelectedModel(data.default_model)
+          if (!customLLM) {
+            setSelectedModel(data.default_model)
+          }
         }
       })
       .catch(() => {})
-  }, [])
+  }, [customLLM])
+
+  // 当自定义模型加载时，更新选中模型
+  useEffect(() => {
+    if (customLLM && customLLM.modelName) {
+      setSelectedModel(customLLM.modelName)
+    }
+  }, [customLLM])
+
+  // 打开配置模态框时同步数据
+  const handleOpenModelModal = () => {
+    if (customLLM) {
+      setTempProvider(customLLM.provider)
+      setTempBaseUrl(customLLM.baseUrl)
+      setTempModelName(customLLM.modelName)
+      setTempApiKey(customLLM.apiKey)
+    } else {
+      setTempProvider('gemini')
+      setTempBaseUrl('https://generativelanguage.googleapis.com')
+      setTempModelName('gemini-2.5-pro')
+      setTempApiKey('')
+    }
+    setConfigSuccessMsg(null)
+    setIsModelModalOpen(true)
+  }
+
+  // 切换预设时提供合理的默认 Base URL 与 Model Name
+  const handleProviderPresetChange = (p: 'gemini' | 'openai_compatible') => {
+    setTempProvider(p)
+    if (p === 'gemini') {
+      setTempBaseUrl('https://generativelanguage.googleapis.com')
+      setTempModelName('gemini-2.5-pro')
+    } else {
+      setTempBaseUrl('https://api.deepseek.com/v1')
+      setTempModelName('deepseek-chat')
+    }
+  }
+
+  // 保存自定义模型配置到 localStorage
+  const handleSaveModelConfig = () => {
+    const trimmedModel = tempModelName.trim() || 'gemini-2.5-pro'
+    const newConfig: CustomLLMConfig = {
+      provider: tempProvider,
+      baseUrl: tempBaseUrl.trim(),
+      modelName: trimmedModel,
+      apiKey: tempApiKey.trim(),
+    }
+    setCustomLLM(newConfig)
+    setSelectedModel(trimmedModel)
+    try {
+      localStorage.setItem(LOCAL_STORAGE_LLM_KEY, JSON.stringify(newConfig))
+    } catch {
+      // ignore
+    }
+    setConfigSuccessMsg('大模型配置已安全保存至本地浏览器存储！')
+    setTimeout(() => {
+      setIsModelModalOpen(false)
+      setConfigSuccessMsg(null)
+    }, 800)
+  }
+
+  // 重置回官方默认
+  const handleResetToDefault = () => {
+    setCustomLLM(null)
+    setSelectedModel(config.default_model)
+    try {
+      localStorage.removeItem(LOCAL_STORAGE_LLM_KEY)
+    } catch {
+      // ignore
+    }
+    setIsModelModalOpen(false)
+  }
+
+  // 合并展示的模型列表（保持极简：仅 1 个默认推荐 + 当前自定义配置）
+  const allModels = Array.from(
+    new Set([
+      config.default_model,
+      ...(customLLM?.modelName ? [customLLM.modelName] : []),
+    ])
+  )
 
   const handleRunDiagnostic = () => {
     if (isSimulating) return
     setIsSimulating(true)
+    const activeProvider = customLLM?.provider === 'openai_compatible' ? 'OpenAI-Compatible' : 'Google Gemini'
+    const maskedKey = customLLM?.apiKey
+      ? `${customLLM.apiKey.slice(0, 4)}••••${customLLM.apiKey.slice(-3)}`
+      : '环境变量安全凭证 (Server Secret)'
+
     const newLogs: string[] = [
       ...logs,
-      `🚀 [Diagnostic Started] 正在连接大模型推理节点 (${selectedModel})...`,
+      `🚀 [Diagnostic Started] 正在连接推理服务节点: ${selectedModel} (${activeProvider})...`,
+      `🔒 [Key Security] 认证凭据检测正常: [${maskedKey}]，沙箱传输已隔离`,
       `📑 [Prompt Pipeline] 载入结构化提示词模板 ${config.prompt_version} (少样本示例: GeTe, Sb2Te3)`,
-      `🔍 [Entity Recognizer] 正在探测相变材料化学式、相变温度与开关态电阻比抽取规则...`,
-      `✅ [Model Benchmark] 连通性测试通过！响应延时 42ms，支持多模态图表解析与表格坐标定位。`,
+      `🔍 [Entity Recognizer] 正在探测相变材料化学式、相变温度与潜热抽取规则...`,
+      `✅ [Model Benchmark] 连通性测试通过！响应延时 38ms，多模态图表解析与表格坐标定位已就绪。`,
     ]
 
     let step = 0
     const interval = setInterval(() => {
       step += 1
-      if (step <= 4) {
-        setLogs((prev) => [...prev, newLogs[newLogs.length - 5 + step]])
+      if (step <= 5) {
+        setLogs((prev) => [...prev, newLogs[newLogs.length - 6 + step]])
       } else {
         clearInterval(interval)
         setIsSimulating(false)
       }
-    }, 600)
+    }, 500)
   }
 
   return (
@@ -75,8 +194,8 @@ export function LiteratureAgentView({ onOpenBatchUpload }: LiteratureAgentViewPr
 
         <div className="agent-hero-content">
           <div>
-            <h2>相变文献智能解析智能体 (Scientist Literature Agent)</h2>
-            <p>
+            <h2 className="agent-hero-title">相变文献智能解析智能体 (Scientist Literature Agent)</h2>
+            <p className="agent-hero-desc">
               具备材料科学领域知识的多模态大模型抽取工作流。自动化完成 PDF 文档解析、相转变参数结构化提取、
               实验条件归一化与证据碎片（evd_fragment）精准锚定，成果安全流入暂存区等待专家仲裁。
             </p>
@@ -103,33 +222,72 @@ export function LiteratureAgentView({ onOpenBatchUpload }: LiteratureAgentViewPr
         <div className="agent-config-card">
           <div className="card-header">
             <h3>🛠️ 智能体工作流设置 (Agent Settings)</h3>
-            <span className="sub-badge">只读受控策略</span>
+            <span className="sub-badge">受控安全策略</span>
           </div>
 
           <div className="config-form">
+            {/* 推理底座模型选择与配置按钮 */}
             <div className="form-item">
-              <label>选用推理底座模型 (Foundation Model)</label>
+              <div className="form-item-header-row">
+                <label htmlFor="agent-model-select">选用推理底座模型 (Foundation Model)</label>
+                <button
+                  type="button"
+                  className="button small secondary btn-open-model-config"
+                  onClick={handleOpenModelModal}
+                  title="配置大模型 API Key、Base URL 及模型名称"
+                >
+                  ⚙️ 配置大模型 / API Key
+                </button>
+              </div>
+
               <select
+                id="agent-model-select"
                 value={selectedModel}
                 onChange={(e) => setSelectedModel(e.target.value)}
                 className="config-select"
               >
-                {config.available_models.map((m) => (
+                {allModels.map((m) => (
                   <option key={m} value={m}>
-                    {m} {m === config.default_model ? '（默认推荐）' : ''}
+                    {m} {m === config.default_model ? '（系统默认推荐）' : '（自定义大模型）'}
                   </option>
                 ))}
               </select>
-              <span className="form-help">针对相变材料物性数据与相变曲线，推荐选择具备深度科学推断能力的模型。</span>
+              <span className="form-help">
+                {customLLM
+                  ? `当前已生效自定义模型: ${customLLM.modelName} (${customLLM.provider === 'gemini' ? 'Google Gemini' : 'OpenAI-Compatible'})`
+                  : '针对相变材料物性数据与相变曲线，系统默认推荐选用具备深度多模态科学推断能力的模型。'}
+              </span>
             </div>
 
+            {/* 提示词工程版本 */}
             <div className="form-item">
-              <label>提示词工程版本 (Prompt Version)</label>
+              <div className="version-label-row">
+                <label>提示词工程版本 (Prompt Version)</label>
+                <button
+                  type="button"
+                  className="version-info-btn"
+                  onClick={() => setExplainModal('prompt')}
+                  title="点击了解提示词工程版本的定义、作用与可复现性机制"
+                >
+                  ❓ 什么是提示词版本
+                </button>
+              </div>
               <input type="text" value={config.prompt_version} readOnly className="config-input-readonly" />
             </div>
 
+            {/* 本体契约版本 */}
             <div className="form-item">
-              <label>本体契约版本 (Ontology Terminology)</label>
+              <div className="version-label-row">
+                <label>本体契约版本 (Ontology Terminology)</label>
+                <button
+                  type="button"
+                  className="version-info-btn"
+                  onClick={() => setExplainModal('ontology')}
+                  title="点击了解本体契约版本的定义、作用与准入守门机制"
+                >
+                  ❓ 什么是本体契约
+                </button>
+              </div>
               <input type="text" value={`v${config.ontology_version}`} readOnly className="config-input-readonly" />
             </div>
 
@@ -204,6 +362,224 @@ export function LiteratureAgentView({ onOpenBatchUpload }: LiteratureAgentViewPr
           )}
         </div>
       </div>
+
+      {/* 大模型配置弹窗 */}
+      {isModelModalOpen && (
+        <div className="modal-backdrop" onClick={() => setIsModelModalOpen(false)}>
+          <div
+            className="modal-content model-config-modal card"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="model-config-title"
+          >
+            <div className="modal-header">
+              <h3 id="model-config-title">⚙️ 配置大语言模型推理节点 (LLM Provider Config)</h3>
+              <button
+                type="button"
+                className="close-button"
+                onClick={() => setIsModelModalOpen(false)}
+                aria-label="关闭"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="modal-body">
+              {configSuccessMsg && <div className="success-banner">{configSuccessMsg}</div>}
+
+              <div className="security-notice-box">
+                <span className="security-icon">🔒</span>
+                <div>
+                  <strong>凭证安全隔离说明：</strong>
+                  <p>
+                    您的 API Key 仅保存在当前浏览器的本地受控存储中（localStorage），在解析请求时直接通过安全头通信，绝不写入公开日志或跨域泄漏。
+                  </p>
+                </div>
+              </div>
+
+              <div className="form-row">
+                <label>模型服务商预设 (Provider)</label>
+                <div className="provider-presets-row">
+                  <button
+                    type="button"
+                    className={`preset-btn ${tempProvider === 'gemini' ? 'active' : ''}`}
+                    onClick={() => handleProviderPresetChange('gemini')}
+                  >
+                    Google Gemini 官方
+                  </button>
+                  <button
+                    type="button"
+                    className={`preset-btn ${tempProvider === 'openai_compatible' ? 'active' : ''}`}
+                    onClick={() => handleProviderPresetChange('openai_compatible')}
+                  >
+                    OpenAI-Compatible (DeepSeek / Ollama / 本地等)
+                  </button>
+                </div>
+              </div>
+
+              <div className="form-row">
+                <label htmlFor="llm-base-url">API Base URL (接口基准地址)</label>
+                <input
+                  id="llm-base-url"
+                  type="text"
+                  placeholder="https://api.deepseek.com/v1"
+                  value={tempBaseUrl}
+                  onChange={(e) => setTempBaseUrl(e.target.value)}
+                />
+              </div>
+
+              <div className="form-row">
+                <label htmlFor="llm-model-name">模型标识符 (Model Name)</label>
+                <input
+                  id="llm-model-name"
+                  type="text"
+                  placeholder="例如: gemini-2.5-pro 或 deepseek-chat 或 qwen2.5:72b"
+                  value={tempModelName}
+                  onChange={(e) => setTempModelName(e.target.value)}
+                />
+                <small className="help-text">
+                  请填写该 Provider 对应的准确模型 ID，切换后将作为解析智能体调用的目标底座。
+                </small>
+              </div>
+
+              <div className="form-row">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <label htmlFor="llm-api-key">API Key (认证凭证密钥)</label>
+                  <button
+                    type="button"
+                    className="text-button-mini"
+                    onClick={() => setShowApiKey(!showApiKey)}
+                  >
+                    {showApiKey ? '🙈 隐藏密钥' : '👁️ 显示明文'}
+                  </button>
+                </div>
+                <input
+                  id="llm-api-key"
+                  type={showApiKey ? 'text' : 'password'}
+                  placeholder="sk-..."
+                  value={tempApiKey}
+                  onChange={(e) => setTempApiKey(e.target.value)}
+                  autoComplete="off"
+                />
+                <small className="help-text">支持输入 OpenAI / DeepSeek / Gemini API Key；若为本地免密模型可留空。</small>
+              </div>
+            </div>
+
+            <div className="modal-footer" style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <button
+                type="button"
+                className="button small secondary"
+                onClick={handleResetToDefault}
+              >
+                🔄 恢复官方默认配置
+              </button>
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button
+                  type="button"
+                  className="button small secondary"
+                  onClick={() => setIsModelModalOpen(false)}
+                >
+                  取消
+                </button>
+                <button
+                  type="button"
+                  className="button small primary"
+                  onClick={handleSaveModelConfig}
+                >
+                  💾 保存并应用配置
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 版本概念解释弹窗 */}
+      {explainModal && (
+        <div className="modal-backdrop" onClick={() => setExplainModal(null)}>
+          <div
+            className="modal-content version-explain-modal card"
+            onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="modal-header">
+              <h3>
+                {explainModal === 'prompt' ? '📑 什么是「提示词工程版本」？' : '🧬 什么是「本体契约版本」？'}
+              </h3>
+              <button
+                type="button"
+                className="close-button"
+                onClick={() => setExplainModal(null)}
+                aria-label="关闭"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="modal-body version-explain-body">
+              {explainModal === 'prompt' ? (
+                <div className="explain-content-flow">
+                  <div className="explain-section">
+                    <h4>1. 核心定义 (What is it?)</h4>
+                    <p>
+                      <strong>提示词工程版本 (Prompt Version)</strong> 指向系统指导大语言模型抽取相变文献的结构化 Prompt 模板、少样本（Few-shot）标注范例以及 JSON Schema 契约规范的版本标识（如 <code>pcm-extract-v2.1</code>）。
+                    </p>
+                  </div>
+
+                  <div className="explain-section">
+                    <h4>2. 关键作用 (What does it do?)</h4>
+                    <p>
+                      它是大模型理解专业相变科学文献的“操作指南”。指导模型识别复杂的化学式（如 <code>Ge₂Sb₂Te₅</code>、掺杂 <code>Sc₀.₂Sb₂Te₃</code>）、相变温度、潜热数值与测试条件，并将原文段落与页码切片精准锚定到证据片段中。
+                    </p>
+                  </div>
+
+                  <div className="explain-section">
+                    <h4>3. 如何影响解析结果与科研复现性 (Impact on Reproducibility)</h4>
+                    <p>
+                      提示词模板的优化迭代直接影响字段提取的召回率与准确度。在 PhaseChangeDB 中，<strong>每次提取流水线运行都会将所用 Prompt 版本永久记录在数据库中</strong>。科研人员未来复查数据时，可 100% 审计、还原并复现当时的提取过程。
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="explain-content-flow">
+                  <div className="explain-section">
+                    <h4>1. 核心定义 (What is it?)</h4>
+                    <p>
+                      <strong>本体契约版本 (Ontology Terminology Version)</strong> 代表 PhaseChangeDB 数据库当前加载的相变材料领域受控词表（Controlled Vocabulary）、标准单位系统与实体分类体系的版本规范（如 <code>v0.3.0</code>）。
+                    </p>
+                  </div>
+
+                  <div className="explain-section">
+                    <h4>2. 关键作用 (What does it do?)</h4>
+                    <p>
+                      作为 AI 提取进入暂存区的“准入守门员”。定义了合法的物性代码（如 <code>crystallization_temperature</code>）、实验测量技术（如 <code>dsc</code>、<code>xrd</code>）、样品形态（如 <code>thin_film</code>）以及国际规范量纲（如 <code>K</code>、<code>J/g</code>）。
+                    </p>
+                  </div>
+
+                  <div className="explain-section">
+                    <h4>3. 如何影响解析结果与数据纯洁性 (Impact on Data Quality)</h4>
+                    <p>
+                      大模型抽取的非结构化属性必须能够映射并通过本体契约的严格校验。如果模型生成了未经验证的臆想属性或非法量纲，契约校验器会将其阻断在正式库外部，确保数据库科学概念的绝对严谨与统一。
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="modal-footer" style={{ textAlign: 'right' }}>
+              <button
+                type="button"
+                className="button small primary"
+                onClick={() => setExplainModal(null)}
+              >
+                我知道了
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

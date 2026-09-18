@@ -8,17 +8,34 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid6 import uuid7
 
+from app.domain.material_normalizer import (
+    VALID_ELEMENTS,
+    extract_elements,
+    is_cost_effective,
+    is_low_toxicity,
+    is_valid_chemical_alias,
+    normalize_formula,
+)
 from app.domain.normalization import format_display_value
 from app.models.batch_upload import (
+    AuthorCountItem,
     BatchIngestItem,
     BatchIngestRequest,
     BatchIngestResponse,
     ConflictObservationItem,
+    GraphEdge,
+    GraphNode,
+    GraphSummary,
+    JournalCountItem,
+    KnowledgeGraphResponse,
+    LiteratureStatsResponse,
     ObservationConflictGroup,
+    SystemCountItem,
+    YearCountItem,
 )
 from app.models.config import AppConfigRead, AppConfigUpdate
 from app.models.literature import PaperCreate, PaperRead
-from app.models.material import MaterialCreate, MaterialRead
+from app.models.material import MaterialCreate, MaterialRead, MaterialVariantRead, VariantObservationRead
 from app.models.mvp import DashboardRead, ObservationListItem, PropertyOption
 from app.models.observation import ObservationCreate, ObservationRead
 from app.models.search import SearchHit
@@ -38,20 +55,6 @@ def _number(value: Decimal | int | float | None) -> float | None:
     return float(value) if value is not None else None
 
 
-VALID_ELEMENTS: set[str] = {
-    "H", "He", "Li", "Be", "B", "C", "N", "O", "F", "Ne",
-    "Na", "Mg", "Al", "Si", "P", "S", "Cl", "Ar", "K", "Ca",
-    "Sc", "Ti", "V", "Cr", "Mn", "Fe", "Co", "Ni", "Cu", "Zn",
-    "Ga", "Ge", "As", "Se", "Br", "Kr", "Rb", "Sr", "Y", "Zr",
-    "Nb", "Mo", "Tc", "Ru", "Rh", "Pd", "Ag", "Cd", "In", "Sn",
-    "Sb", "Te", "I", "Xe", "Cs", "Ba", "La", "Ce", "Pr", "Nd",
-    "Pm", "Sm", "Eu", "Gd", "Tb", "Dy", "Ho", "Er", "Tm", "Yb",
-    "Lu", "Hf", "Ta", "W", "Re", "Os", "Ir", "Pt", "Au", "Hg",
-    "Tl", "Pb", "Bi", "Po", "At", "Rn", "Fr", "Ra", "Ac", "Th",
-    "Pa", "U", "Np", "Pu", "Am", "Cm", "Bk", "Cf", "Es", "Fm",
-    "Md", "No", "Lr", "Rf", "Db", "Sg", "Bh", "Hs", "Mt", "Ds",
-    "Rg", "Cn", "Nh", "Fl", "Mc", "Lv", "Ts", "Og",
-}
 
 
 class MySQLCatalogRepository:
@@ -84,17 +87,29 @@ class MySQLCatalogRepository:
         return DashboardRead(**row)
 
     async def list_materials(
-        self, query: str | None, limit: int, elements: list[str] | None = None
+        self,
+        query: str | None = None,
+        limit: int = 50,
+        elements: list[str] | None = None,
+        min_tc: float | None = None,
+        max_tc: float | None = None,
+        min_latent_heat: float | None = None,
+        max_latent_heat: float | None = None,
+        low_toxicity: bool | None = None,
+        cost_effective: bool | None = None,
     ) -> list[MaterialRead]:
         conditions = [
-            "canonical_formula NOT LIKE 'CandReqId%'",
-            "canonical_formula NOT LIKE 'ReqIdMat%'",
-            "canonical_formula NOT LIKE 'AcceptanceMat%'",
+            "m.canonical_formula NOT LIKE 'CandReqId%'",
+            "m.canonical_formula NOT LIKE 'ReqIdMat%'",
+            "m.canonical_formula NOT LIKE 'AcceptanceMat%'",
         ]
-        params: dict[str, Any] = {"limit": limit}
+        params: dict[str, Any] = {}
 
         if query:
-            conditions.append("(canonical_formula LIKE :query OR chemical_system LIKE :query OR name LIKE :query)")
+            conditions.append(
+                "(m.canonical_formula LIKE :query OR m.chemical_system LIKE :query OR m.name LIKE :query "
+                "OR EXISTS (SELECT 1 FROM mat_material_alias ma WHERE ma.material_id = m.id AND ma.alias LIKE :query))"
+            )
             params["query"] = f"%{query}%"
 
         if elements:
@@ -105,30 +120,126 @@ class MySQLCatalogRepository:
                 sys_param = f"elem_sys_{idx}"
                 form_param = f"elem_form_{idx}"
                 conditions.append(
-                    f"(CONCAT('-', chemical_system, '-') LIKE :{sys_param} OR canonical_formula LIKE :{form_param})"
+                    f"(CONCAT('-', m.chemical_system, '-') LIKE :{sys_param} OR m.canonical_formula LIKE :{form_param})"
                 )
                 params[sys_param] = f"%-{el_clean}-%"
                 params[form_param] = f"%{el_clean}%"
 
         where = f"WHERE {' AND '.join(conditions)}"
-        rows = (
-            (
-                await self.session.execute(
-                    text(
-                        f"""
-                    SELECT id, canonical_formula, reduced_formula, chemical_system,
-                           material_family_term_id, name, description, row_version, created_at, updated_at
-                    FROM mat_material {where}
-                    ORDER BY updated_at DESC, id DESC LIMIT :limit
-                    """
-                    ),
-                    params,
-                )
-            )
-            .mappings()
-            .all()
-        )
-        return [self._material(row) for row in rows]
+        sql = f"""
+            SELECT m.id, m.canonical_formula, m.reduced_formula, m.chemical_system,
+                   m.material_family_term_id, m.name, m.description, m.row_version, m.created_at, m.updated_at
+            FROM mat_material m
+            {where}
+            ORDER BY m.updated_at DESC, m.id DESC
+        """
+        rows = (await self.session.execute(text(sql), params)).mappings().all()
+        if not rows:
+            return []
+
+        # 批量获取别名、样品与观测统计
+        mids = [r["id"] for r in rows]
+        placeholders = ", ".join([f":mid_{i}" for i in range(len(mids))])
+        mparams = {f"mid_{i}": mid for i, mid in enumerate(mids)}
+
+        alias_sql = f"SELECT material_id, alias FROM mat_material_alias WHERE material_id IN ({placeholders})"
+        alias_rows = (await self.session.execute(text(alias_sql), mparams)).mappings().all()
+        aliases_by_mat: dict[bytes, list[str]] = {}
+        for ar in alias_rows:
+            aliases_by_mat.setdefault(bytes(ar["material_id"]), []).append(ar["alias"])
+
+        # 查询每个材料关联的样品数量、文献数量及相变温度/潜热观测
+        stats_sql = f"""
+            SELECT s.nominal_material_id AS material_id,
+                   s.id AS sample_id,
+                   s.source_paper_id,
+                   pd.code AS property_code,
+                   canon_u.code AS canonical_unit,
+                   o.value_numeric,
+                   o.normalized_value,
+                   o.original_unit_text
+            FROM sam_sample s
+            LEFT JOIN obs_observation o ON o.sample_id = s.id
+            LEFT JOIN obs_property_definition pd ON pd.id = o.property_definition_id
+            LEFT JOIN ont_term canon_u ON canon_u.id = pd.canonical_unit_term_id
+            WHERE s.nominal_material_id IN ({placeholders})
+        """
+        stats_rows = (await self.session.execute(text(stats_sql), mparams)).mappings().all()
+
+        samples_by_mat: dict[bytes, set[bytes]] = {}
+        papers_by_mat: dict[bytes, set[bytes]] = {}
+        tc_obs_by_mat: dict[bytes, list[float]] = {}
+        lh_obs_by_mat: dict[bytes, list[float]] = {}
+
+        for sr in stats_rows:
+            mat_b = bytes(sr["material_id"])
+            if sr["sample_id"]:
+                samples_by_mat.setdefault(mat_b, set()).add(bytes(sr["sample_id"]))
+            if sr["source_paper_id"]:
+                papers_by_mat.setdefault(mat_b, set()).add(bytes(sr["source_paper_id"]))
+
+            num_val = _number(sr["normalized_value"] if sr["normalized_value"] is not None else sr["value_numeric"])
+            if num_val is not None:
+                p_code = (sr["property_code"] or "").lower()
+                if "crystallization_temperature" in p_code or p_code in {"tx", "tc"}:
+                    tc_obs_by_mat.setdefault(mat_b, []).append(num_val)
+                elif "latent_heat" in p_code or "enthalpy" in p_code:
+                    lh_obs_by_mat.setdefault(mat_b, []).append(num_val)
+
+        results: list[MaterialRead] = []
+        for row in rows:
+            mat_b = bytes(row["id"])
+            c_form = row["canonical_formula"]
+            elems = extract_elements(c_form)
+            is_low_tox = is_low_toxicity(elems)
+            is_cost_eff = is_cost_effective(elems)
+
+            if low_toxicity is not None and is_low_tox != low_toxicity:
+                continue
+            if cost_effective is not None and is_cost_eff != cost_effective:
+                continue
+
+            tc_list = tc_obs_by_mat.get(mat_b, [])
+            lh_list = lh_obs_by_mat.get(mat_b, [])
+
+            if min_tc is not None and (not tc_list or max(tc_list) < min_tc):
+                continue
+            if max_tc is not None and (not tc_list or min(tc_list) > max_tc):
+                continue
+            if min_latent_heat is not None and (not lh_list or max(lh_list) < min_latent_heat):
+                continue
+            if max_latent_heat is not None and (not lh_list or min(lh_list) > max_latent_heat):
+                continue
+
+            typical_props: dict[str, Any] = {}
+            if tc_list:
+                rep_tc = round(sum(tc_list) / len(tc_list), 1)
+                typical_props["crystallization_temperature"] = {
+                    "value": rep_tc,
+                    "unit": "K",
+                    "display": f"{rep_tc} K",
+                }
+            if lh_list:
+                rep_lh = round(sum(lh_list) / len(lh_list), 1)
+                typical_props["latent_heat"] = {
+                    "value": rep_lh,
+                    "unit": "J/g",
+                    "display": f"{rep_lh} J/g",
+                }
+
+            mat_obj = self._material(row)
+            mat_obj.aliases = aliases_by_mat.get(mat_b, [])
+            mat_obj.is_low_toxicity = is_low_tox
+            mat_obj.is_cost_effective = is_cost_eff
+            mat_obj.variant_count = len(samples_by_mat.get(mat_b, set()))
+            mat_obj.paper_count = len(papers_by_mat.get(mat_b, set()))
+            mat_obj.typical_properties = typical_props
+
+            results.append(mat_obj)
+            if len(results) >= limit:
+                break
+
+        return results
 
     async def get_existing_elements(self) -> list[str]:
         rows = (
@@ -198,11 +309,182 @@ class MySQLCatalogRepository:
                 {"id": mid.bytes},
             )
         ).scalars().all()
+
+        # 查询该材料下的所有样品变体及其工艺、测试与文献
+        variants_sql = """
+            SELECT s.id AS sample_id, s.sample_label, s.description AS sample_desc,
+                   s.thickness_value, s.thickness_unit, s.substrate_material,
+                   s.source_paper_id,
+                   lp.title AS paper_title, lp.doi AS paper_doi, lp.journal AS paper_journal,
+                   lp.publication_year AS paper_year, lp.metadata_json AS paper_meta,
+                   em.instrument AS measurement_instrument,
+                   em.temperature_value AS meas_temp, em.temperature_unit AS meas_temp_unit,
+                   em.pressure_value AS meas_press, em.pressure_unit AS meas_press_unit,
+                   pr.process_name,
+                   ps.temperature_value AS proc_temp, ps.temperature_unit AS proc_temp_unit,
+                   ps.pressure_value AS proc_press, ps.pressure_unit AS proc_press_unit
+            FROM sam_sample s
+            LEFT JOIN lit_paper lp ON lp.id = s.source_paper_id
+            LEFT JOIN exp_measurement em ON em.sample_id = s.id
+            LEFT JOIN exp_process_run pr ON pr.sample_id = s.id
+            LEFT JOIN exp_process_step ps ON ps.process_run_id = pr.id
+            WHERE s.nominal_material_id = :mid
+            ORDER BY s.created_at DESC
+        """
+        sample_rows = (
+            await self.session.execute(text(variants_sql), {"mid": mid.bytes})
+        ).mappings().all()
+
+        paper_ids = [r["source_paper_id"] for r in sample_rows if r["source_paper_id"]]
+        authors_map = await self._load_authors_for_papers(paper_ids) if paper_ids else {}
+
+        # 查询这些 sample 对应的观测
+        sids = [r["sample_id"] for r in sample_rows]
+        obs_by_sample: dict[bytes, list[VariantObservationRead]] = {}
+        if sids:
+            s_placeholders = ", ".join([f":sid_{i}" for i in range(len(sids))])
+            sparams = {f"sid_{i}": sid for i, sid in enumerate(sids)}
+            obs_sql = f"""
+                SELECT o.id, o.sample_id, pd.code AS property_code, pd.name AS property_name,
+                       canon_u.code AS canonical_unit,
+                       o.value_numeric, o.normalized_value, o.original_unit_text, o.value_text,
+                       o.verification_status
+                FROM obs_observation o
+                JOIN obs_property_definition pd ON pd.id = o.property_definition_id
+                LEFT JOIN ont_term canon_u ON canon_u.id = pd.canonical_unit_term_id
+                WHERE o.sample_id IN ({s_placeholders})
+            """
+            obs_rows = (await self.session.execute(text(obs_sql), sparams)).mappings().all()
+            for obs_r in obs_rows:
+                s_b = bytes(obs_r["sample_id"])
+                raw_v = _number(obs_r["value_numeric"]) if obs_r["value_numeric"] is not None else obs_r["value_text"]
+                disp_v = format_display_value(
+                    value=raw_v,
+                    unit=obs_r["original_unit_text"] or obs_r["canonical_unit"],
+                    canonical_unit=obs_r["canonical_unit"],
+                    normalized_value=_number(obs_r["normalized_value"]),
+                )
+                obs_by_sample.setdefault(s_b, []).append(
+                    VariantObservationRead(
+                        id=UUID(bytes=bytes(obs_r["id"])),
+                        property_code=obs_r["property_code"],
+                        property_name=obs_r["property_name"],
+                        value=raw_v,
+                        unit=obs_r["original_unit_text"] or obs_r["canonical_unit"],
+                        display_value=disp_v,
+                        verification_status=obs_r["verification_status"],
+                    )
+                )
+
+        seen_sample_ids: set[bytes] = set()
+        variants: list[MaterialVariantRead] = []
+        c_form = row["canonical_formula"]
+
+        for sr in sample_rows:
+            sid_b = bytes(sr["sample_id"])
+            if sid_b in seen_sample_ids:
+                continue
+            seen_sample_ids.add(sid_b)
+
+            pid_bytes = bytes(sr["source_paper_id"]) if sr["source_paper_id"] else None
+            p_authors = authors_map.get(pid_bytes, []) if pid_bytes else []
+            first_auth = next((a["name"] for a in p_authors if a.get("author_order") == 1), None)
+            corr_auth = next((a["name"] for a in p_authors if a.get("corresponding")), None)
+            if not corr_auth and p_authors:
+                corr_auth = p_authors[-1]["name"]
+
+            # 解析掺杂与成分
+            desc = sr["sample_desc"] or ""
+            dopant_elem = None
+            dopant_conc = None
+            dop_m = re.search(r"([A-Z][a-z]?)[-_ ]?(?:dop(?:ed|ant)?|掺杂)[^0-9]*([0-9]+\.?[0-9]*)", desc, re.IGNORECASE)
+            if dop_m:
+                dopant_elem = dop_m.group(1)
+                dopant_conc = float(dop_m.group(2))
+            elif "Sc" in desc:
+                dopant_elem = "Sc"
+                dopant_conc = 0.2
+
+            prep_method = sr["process_name"] or sr["substrate_material"]
+            if sr["thickness_value"]:
+                prep_method = f"{prep_method or '薄膜'} (厚度: {sr['thickness_value']} {sr['thickness_unit'] or 'nm'})".strip()
+
+            anneal_temp = None
+            if sr["proc_temp"] is not None:
+                anneal_temp = format_display_value(sr["proc_temp"], sr["proc_temp_unit"] or "K", "K")
+            elif sr["meas_temp"] is not None:
+                anneal_temp = format_display_value(sr["meas_temp"], sr["meas_temp_unit"] or "K", "K")
+
+            press_str = None
+            if sr["meas_press"] is not None:
+                press_str = f"{sr['meas_press']} {sr['meas_press_unit'] or 'GPa'}"
+            elif sr["proc_press"] is not None:
+                press_str = f"{sr['proc_press']} {sr['proc_press_unit'] or 'GPa'}"
+
+            variants.append(
+                MaterialVariantRead(
+                    sample_id=UUID(bytes=sid_b),
+                    sample_label=sr["sample_label"],
+                    nominal_formula=c_form,
+                    original_name=sr["sample_desc"] or sr["sample_label"],
+                    doping_element=dopant_elem,
+                    doping_concentration=dopant_conc,
+                    preparation_method=prep_method,
+                    annealing_temperature=anneal_temp,
+                    pressure=press_str,
+                    test_method=sr["measurement_instrument"],
+                    crystal_phase="fcc / hcp" if "fcc" in desc.lower() else None,
+                    atmosphere="vacuum / Ar" if "vacuum" in desc.lower() else None,
+                    cooling_rate=None,
+                    paper_id=UUID(bytes=pid_bytes) if pid_bytes else None,
+                    paper_title=sr["paper_title"],
+                    paper_doi=sr["paper_doi"],
+                    first_author=first_auth,
+                    corresponding_author=corr_auth,
+                    journal=sr["paper_journal"],
+                    publication_year=sr["paper_year"],
+                    observations=obs_by_sample.get(sid_b, []),
+                )
+            )
+
         mat = self._material(row)
         mat.aliases = list(alias_rows)
+        mat.variants = variants
+        mat.variant_count = len(variants)
+        mat.paper_count = len(set(paper_ids))
         return mat
 
     async def create_material(self, body: MaterialCreate) -> MaterialRead:
+        norm = normalize_formula(body.canonical_formula)
+        canonical_formula = norm.canonical_formula
+        chemical_system = norm.chemical_system or body.chemical_system
+        reduced_formula = norm.reduced_formula or body.reduced_formula or canonical_formula
+
+        existing = (
+            await self.session.execute(
+                text("SELECT id FROM mat_material WHERE canonical_formula = :formula"),
+                {"formula": canonical_formula},
+            )
+        ).mappings().first()
+
+        if existing:
+            mat_id = UUID(bytes=bytes(existing["id"]))
+            alias_to_add = {a for a in body.aliases if is_valid_chemical_alias(a)}
+            if body.canonical_formula != canonical_formula and is_valid_chemical_alias(body.canonical_formula):
+                alias_to_add.add(body.canonical_formula)
+            async with self.session.begin():
+                for alias in alias_to_add:
+                    await self.session.execute(
+                        text(
+                            "INSERT IGNORE INTO mat_material_alias (id, material_id, alias) "
+                            "VALUES (:id, :mid, :alias)"
+                        ),
+                        {"id": uuid7().bytes, "mid": mat_id.bytes, "alias": alias},
+                    )
+            mat = await self.get_material(str(mat_id))
+            assert mat is not None
+            return mat
+
         material_id = uuid7()
         event_id = uuid7()
         async with self.session.begin():
@@ -218,15 +500,18 @@ class MySQLCatalogRepository:
                 ),
                 {
                     "id": material_id.bytes,
-                    "canonical_formula": body.canonical_formula,
-                    "reduced_formula": body.reduced_formula,
-                    "chemical_system": body.chemical_system,
+                    "canonical_formula": canonical_formula,
+                    "reduced_formula": reduced_formula,
+                    "chemical_system": chemical_system,
                     "family_id": body.material_family_term_id.bytes if body.material_family_term_id else None,
-                    "name": body.name,
+                    "name": body.name or norm.name,
                     "description": body.description,
                 },
             )
-            for alias in dict.fromkeys(body.aliases):
+            all_aliases = {a for a in body.aliases if is_valid_chemical_alias(a)}
+            if body.canonical_formula != canonical_formula and is_valid_chemical_alias(body.canonical_formula):
+                all_aliases.add(body.canonical_formula)
+            for alias in all_aliases:
                 await self.session.execute(
                     text("INSERT INTO mat_material_alias (id, material_id, alias) VALUES (:id, :material_id, :alias)"),
                     {"id": uuid7().bytes, "material_id": material_id.bytes, "alias": alias},
@@ -234,7 +519,6 @@ class MySQLCatalogRepository:
             await self._outbox(event_id, "Material", material_id, "MaterialCreated", {"id": str(material_id)})
         created = await self.get_material(str(material_id))
         assert created is not None
-        created.aliases = body.aliases
         return created
 
     async def _load_authors_for_papers(self, paper_ids: list[Any]) -> dict[bytes, list[dict[str, Any]]]:
@@ -616,17 +900,26 @@ class MySQLCatalogRepository:
 
     async def search(self, query: str, limit: int) -> list[SearchHit]:
         pattern = f"%{query}%"
+        norm_res = normalize_formula(query)
+        norm_pattern = f"%{norm_res.canonical_formula}%"
         material_rows = (
             (
                 await self.session.execute(
                     text(
                         """
-                    SELECT id, canonical_formula, chemical_system FROM mat_material
-                    WHERE canonical_formula LIKE :query OR chemical_system LIKE :query OR name LIKE :query
+                    SELECT DISTINCT m.id, m.canonical_formula, m.chemical_system
+                    FROM mat_material m
+                    LEFT JOIN mat_material_alias a ON a.material_id = m.id
+                    WHERE m.canonical_formula LIKE :query
+                       OR m.canonical_formula LIKE :norm_query
+                       OR m.chemical_system LIKE :query
+                       OR m.name LIKE :query
+                       OR a.alias LIKE :query
+                       OR a.alias LIKE :norm_query
                     LIMIT :limit
                     """
                     ),
-                    {"query": pattern, "limit": limit},
+                    {"query": pattern, "norm_query": norm_pattern, "limit": limit},
                 )
             )
             .mappings()
@@ -897,9 +1190,11 @@ class MySQLCatalogRepository:
 
     @staticmethod
     def _material(row: Any) -> MaterialRead:
+        c_form = row["canonical_formula"]
+        elems = extract_elements(c_form)
         return MaterialRead(
             id=_uuid(row["id"]),
-            canonical_formula=row["canonical_formula"],
+            canonical_formula=c_form,
             reduced_formula=row["reduced_formula"],
             chemical_system=row["chemical_system"],
             material_family_term_id=_uuid(row["material_family_term_id"]),
@@ -910,6 +1205,12 @@ class MySQLCatalogRepository:
             updated_at=row["updated_at"],
             aliases=[],
             components=[],
+            is_low_toxicity=is_low_toxicity(elems),
+            is_cost_effective=is_cost_effective(elems),
+            variant_count=0,
+            paper_count=0,
+            typical_properties={},
+            variants=[],
         )
 
     @staticmethod
@@ -967,3 +1268,496 @@ class MySQLCatalogRepository:
         if row["value_kind"] == "boolean":
             return bool(row["value_boolean"])
         return _number(row["normalized_value"] if row["normalized_value"] is not None else row["value_numeric"])
+
+    async def get_literature_stats(self) -> LiteratureStatsResponse:
+        """聚合有效文献的发表年份、期刊分布及核心作者。"""
+        papers = await self.list_papers(query=None, limit=500)
+        total_papers = len(papers)
+
+        year_counts: dict[int, int] = {}
+        journal_counts: dict[str, int] = {}
+        author_counts: dict[str, int] = {}
+
+        def _normalize_journal(j: str | None) -> str:
+            if not j or not j.strip():
+                return "其他 / 预印本"
+            j_clean = j.strip()
+            if re.search(r"arxiv", j_clean, re.IGNORECASE):
+                return "arXiv.org"
+            if re.search(r"nature\s+materials", j_clean, re.IGNORECASE):
+                return "Nature Materials"
+            if re.search(r"journal\s+of\s+applied\s+physics", j_clean, re.IGNORECASE):
+                return "Journal of Applied Physics"
+            if re.search(r"optics\s*(?:&|and)\s*laser\s*technology", j_clean, re.IGNORECASE):
+                return "Optics & Laser Technology"
+            if re.search(r"applied\s+physics\s+letters", j_clean, re.IGNORECASE):
+                return "Applied Physics Letters"
+            return j_clean
+
+        for p in papers:
+            if p.publication_year:
+                year_counts[p.publication_year] = year_counts.get(p.publication_year, 0) + 1
+            norm_j = _normalize_journal(p.journal)
+            journal_counts[norm_j] = journal_counts.get(norm_j, 0) + 1
+            if p.authors:
+                for a in p.authors:
+                    a_name = a.strip()
+                    if a_name:
+                        author_counts[a_name] = author_counts.get(a_name, 0) + 1
+
+        # 查询文献关联的样品所属材料体系
+        sample_sys_rows = (
+            await self.session.execute(
+                text(
+                    """
+                    SELECT DISTINCT s.source_paper_id, m.chemical_system
+                    FROM sam_sample s
+                    JOIN mat_material m ON s.nominal_material_id = m.id
+                    WHERE s.source_paper_id IS NOT NULL
+                    """
+                )
+            )
+        ).fetchall()
+
+        paper_to_systems: dict[bytes, set[str]] = {}
+        for row in sample_sys_rows:
+            pid = bytes(row[0])
+            sys_val = row[1]
+            if sys_val:
+                paper_to_systems.setdefault(pid, set()).add(sys_val)
+
+        # 加载已知材料公式与化学体系，用于补充文本提及体系
+        mat_rows = (
+            await self.session.execute(
+                text("SELECT canonical_formula, chemical_system FROM mat_material")
+            )
+        ).fetchall()
+        mat_formula_to_sys = {r[0].lower(): r[1] for r in mat_rows if r[1]}
+
+        system_counts: dict[str, int] = {}
+        for p in papers:
+            p_bytes = p.id.bytes
+            systems_for_p = set(paper_to_systems.get(p_bytes, set()))
+            # 补充基于标题与摘要的化学体系命中
+            text_corpus = f"{p.title} {p.abstract or ''}".lower()
+            for formula_l, sys_name in mat_formula_to_sys.items():
+                if formula_l in text_corpus:
+                    systems_for_p.add(sys_name)
+
+            if not systems_for_p:
+                systems_for_p.add("其他 / 待关联体系")
+
+            for s in systems_for_p:
+                system_counts[s] = system_counts.get(s, 0) + 1
+
+        year_distribution = [
+            YearCountItem(year=y, count=c)
+            for y, c in sorted(year_counts.items(), key=lambda x: x[0])
+        ]
+        journal_distribution = [
+            JournalCountItem(journal=j, count=c)
+            for j, c in sorted(journal_counts.items(), key=lambda x: x[1], reverse=True)
+        ]
+        author_distribution = [
+            AuthorCountItem(author=a, count=c)
+            for a, c in sorted(author_counts.items(), key=lambda x: x[1], reverse=True)[:15]
+        ]
+        system_distribution = [
+            SystemCountItem(chemical_system=s, count=c)
+            for s, c in sorted(system_counts.items(), key=lambda x: x[1], reverse=True)
+        ]
+
+        return LiteratureStatsResponse(
+            total_papers=total_papers,
+            year_distribution=year_distribution,
+            journal_distribution=journal_distribution,
+            author_distribution=author_distribution,
+            system_distribution=system_distribution,
+        )
+
+    async def get_knowledge_graph(
+        self,
+        element: str | None = None,
+        material_id: str | None = None,
+        include_papers: bool = False,
+        subgraph: str | None = None,
+        limit: int = 60,
+    ) -> KnowledgeGraphResponse:
+        """基于权威 MySQL 数据源构建宏观科学骨干图谱或材料文献证据子图谱。"""
+        materials = await self.list_materials(query=None, limit=limit, elements=[element] if element else None)
+        if material_id:
+            try:
+                target_mid = UUID(material_id)
+                materials = [m for m in materials if m.id == target_mid]
+            except ValueError:
+                pass
+
+        material_map = {str(m.id): m for m in materials}
+        if not materials:
+            return KnowledgeGraphResponse(
+                nodes=[],
+                edges=[],
+                summary=GraphSummary(
+                    total_nodes=0,
+                    total_edges=0,
+                    material_count=0,
+                    paper_count=0,
+                    element_count=0,
+                    property_count=0,
+                    system_count=0,
+                    author_count=0,
+                    journal_count=0,
+                ),
+            )
+
+        nodes: list[GraphNode] = []
+        edges: list[GraphEdge] = []
+        node_ids: set[str] = set()
+        edge_keys: set[tuple[str, str, str]] = set()
+
+        # 1. 注册材料主节点
+        for m in materials:
+            m_id = f"mat_{m.id}"
+            if m_id not in node_ids:
+                node_ids.add(m_id)
+                nodes.append(
+                    GraphNode(
+                        id=m_id,
+                        label=m.canonical_formula,
+                        node_type="material",
+                        properties={
+                            "material_id": str(m.id),
+                            "canonical_formula": m.canonical_formula,
+                            "chemical_system": m.chemical_system,
+                            "name": m.name or m.canonical_formula,
+                        },
+                    )
+                )
+
+        # 模式 A: 文献证据子图谱 (subgraph == "literature" 或 (material_id and subgraph != "macro"))
+        if subgraph == "literature" or (material_id and subgraph != "macro"):
+            papers = await self.list_papers(query=None, limit=100)
+            for m in materials:
+                m_node_id = f"mat_{m.id}"
+                formula_clean = m.canonical_formula.lower()
+
+                # 查找与该材料相关的文献
+                for p in papers:
+                    p_corpus = f"{p.title} {p.abstract or ''}".lower()
+                    if formula_clean in p_corpus or (m.chemical_system and m.chemical_system.lower() in p_corpus):
+                        p_node_id = f"paper_{p.id}"
+                        if p_node_id not in node_ids:
+                            node_ids.add(p_node_id)
+                            nodes.append(
+                                GraphNode(
+                                    id=p_node_id,
+                                    label=p.title[:26] + "..." if len(p.title) > 28 else p.title,
+                                    node_type="paper",
+                                    properties={
+                                        "paper_id": str(p.id),
+                                        "title": p.title,
+                                        "doi": p.doi,
+                                        "journal": p.journal,
+                                        "year": p.publication_year,
+                                        "first_author": p.first_author,
+                                        "corresponding_author": p.corresponding_author,
+                                    },
+                                )
+                            )
+
+                        edge_key = (m_node_id, p_node_id, "EVIDENCED_BY")
+                        if edge_key not in edge_keys:
+                            edge_keys.add(edge_key)
+                            edges.append(
+                                GraphEdge(
+                                    id=f"e_{len(edges)}",
+                                    source=m_node_id,
+                                    target=p_node_id,
+                                    edge_type="EVIDENCED_BY",
+                                    label="文献证据",
+                                )
+                            )
+
+                        # 第一作者同级节点
+                        if p.first_author and p.first_author.strip():
+                            fa_name = p.first_author.strip()
+                            fa_node_id = f"author_{re.sub(r'[^a-zA-Z0-9]', '_', fa_name)}"
+                            if fa_node_id not in node_ids:
+                                node_ids.add(fa_node_id)
+                                nodes.append(
+                                    GraphNode(
+                                        id=fa_node_id,
+                                        label=fa_name,
+                                        node_type="first_author",
+                                        properties={"name": fa_name, "role": "第一作者"},
+                                    )
+                                )
+                            fa_edge_key = (p_node_id, fa_node_id, "FIRST_AUTHORED_BY")
+                            if fa_edge_key not in edge_keys:
+                                edge_keys.add(fa_edge_key)
+                                edges.append(
+                                    GraphEdge(
+                                        id=f"e_{len(edges)}",
+                                        source=p_node_id,
+                                        target=fa_node_id,
+                                        edge_type="FIRST_AUTHORED_BY",
+                                        label="第一作者",
+                                    )
+                                )
+
+                        # 通讯作者同级节点（若与第一作者不同）
+                        if p.corresponding_author and p.corresponding_author.strip():
+                            ca_name = p.corresponding_author.strip()
+                            if not p.first_author or ca_name != p.first_author.strip():
+                                ca_node_id = f"author_{re.sub(r'[^a-zA-Z0-9]', '_', ca_name)}"
+                                if ca_node_id not in node_ids:
+                                    node_ids.add(ca_node_id)
+                                    nodes.append(
+                                        GraphNode(
+                                            id=ca_node_id,
+                                            label=ca_name,
+                                            node_type="corresponding_author",
+                                            properties={"name": ca_name, "role": "通讯作者"},
+                                        )
+                                    )
+                                ca_edge_key = (p_node_id, ca_node_id, "CORRESPONDING_AUTHORED_BY")
+                                if ca_edge_key not in edge_keys:
+                                    edge_keys.add(ca_edge_key)
+                                    edges.append(
+                                        GraphEdge(
+                                            id=f"e_{len(edges)}",
+                                            source=p_node_id,
+                                            target=ca_node_id,
+                                            edge_type="CORRESPONDING_AUTHORED_BY",
+                                            label="通讯作者",
+                                        )
+                                    )
+
+                        # 收录期刊同级节点
+                        if p.journal and p.journal.strip():
+                            j_name = p.journal.strip()
+                            j_node_id = f"journal_{re.sub(r'[^a-zA-Z0-9]', '_', j_name)}"
+                            if j_node_id not in node_ids:
+                                node_ids.add(j_node_id)
+                                nodes.append(
+                                    GraphNode(
+                                        id=j_node_id,
+                                        label=j_name[:24] + "..." if len(j_name) > 26 else j_name,
+                                        node_type="journal",
+                                        properties={"name": j_name},
+                                    )
+                                )
+                            j_edge_key = (p_node_id, j_node_id, "PUBLISHED_IN")
+                            if j_edge_key not in edge_keys:
+                                edge_keys.add(j_edge_key)
+                                edges.append(
+                                    GraphEdge(
+                                        id=f"e_{len(edges)}",
+                                        source=p_node_id,
+                                        target=j_node_id,
+                                        edge_type="PUBLISHED_IN",
+                                        label="发表于",
+                                    )
+                                )
+
+        # 模式 B: 主宏观科学图谱 (Core Macro Graph)
+        else:
+            # 2. 构成元素节点与体系节点
+            for m in materials:
+                m_node_id = f"mat_{m.id}"
+                chem_sys = m.chemical_system or ""
+                elements_in_mat = [el for el in chem_sys.split("-") if el in VALID_ELEMENTS]
+                if not elements_in_mat:
+                    elements_in_mat = [el for el in re.findall(r"[A-Z][a-z]?", m.canonical_formula) if el in VALID_ELEMENTS]
+
+                for el in set(elements_in_mat):
+                    el_node_id = f"elem_{el}"
+                    if el_node_id not in node_ids:
+                        node_ids.add(el_node_id)
+                        nodes.append(
+                            GraphNode(
+                                id=el_node_id,
+                                label=el,
+                                node_type="element",
+                                properties={"symbol": el},
+                            )
+                        )
+                    edge_key = (m_node_id, el_node_id, "CONTAINS_ELEMENT")
+                    if edge_key not in edge_keys:
+                        edge_keys.add(edge_key)
+                        edges.append(
+                            GraphEdge(
+                                id=f"e_{len(edges)}",
+                                source=m_node_id,
+                                target=el_node_id,
+                                edge_type="CONTAINS_ELEMENT",
+                                label="包含元素",
+                            )
+                        )
+
+                # 化学体系节点
+                if chem_sys:
+                    sys_node_id = f"sys_{chem_sys}"
+                    if sys_node_id not in node_ids:
+                        node_ids.add(sys_node_id)
+                        nodes.append(
+                            GraphNode(
+                                id=sys_node_id,
+                                label=chem_sys,
+                                node_type="system",
+                                properties={"chemical_system": chem_sys},
+                            )
+                        )
+                    edge_key = (m_node_id, sys_node_id, "BELONGS_TO_SYSTEM")
+                    if edge_key not in edge_keys:
+                        edge_keys.add(edge_key)
+                        edges.append(
+                            GraphEdge(
+                                id=f"e_{len(edges)}",
+                                source=m_node_id,
+                                target=sys_node_id,
+                                edge_type="BELONGS_TO_SYSTEM",
+                                label="所属体系",
+                            )
+                        )
+
+            # 3. 核心物理/化学物性节点
+            mat_ids_bytes = [m.id.bytes for m in materials]
+            if mat_ids_bytes:
+                placeholders = ", ".join([f":mid_{i}" for i in range(len(mat_ids_bytes))])
+                params = {f"mid_{i}": mid for i, mid in enumerate(mat_ids_bytes)}
+                obs_sql = f"""
+                    SELECT
+                        o.id AS obs_id,
+                        s.nominal_material_id AS material_id,
+                        pd.id AS prop_id,
+                        pd.name AS property_name,
+                        canon_u.code AS canonical_unit,
+                        o.value_numeric,
+                        o.value_kind,
+                        o.normalized_value,
+                        u.code AS normalized_unit,
+                        o.value_text,
+                        o.value_min,
+                        o.value_max
+                    FROM obs_observation o
+                    JOIN sam_sample s ON s.id = o.sample_id
+                    JOIN obs_property_definition pd ON pd.id = o.property_definition_id
+                    LEFT JOIN ont_term canon_u ON canon_u.id = pd.canonical_unit_term_id
+                    LEFT JOIN ont_term u ON u.id = o.normalized_unit_term_id
+                    WHERE s.nominal_material_id IN ({placeholders})
+                    LIMIT 50
+                """
+                obs_rows = (await self.session.execute(text(obs_sql), params)).mappings().all()
+                for r in obs_rows:
+                    mat_guid = _uuid(r["material_id"])
+                    if not mat_guid or str(mat_guid) not in material_map:
+                        continue
+                    m_node_id = f"mat_{mat_guid}"
+                    prop_guid = _uuid(r["prop_id"])
+                    prop_node_id = f"prop_{prop_guid}"
+
+                    raw_val = _number(r["value_numeric"]) if r["value_numeric"] is not None else r["value_text"]
+                    disp_val = format_display_value(
+                        value=raw_val,
+                        unit=r["normalized_unit"] or r["canonical_unit"],
+                        canonical_unit=r["canonical_unit"],
+                        normalized_value=_number(r["normalized_value"]),
+                    )
+
+                    if prop_node_id not in node_ids:
+                        node_ids.add(prop_node_id)
+                        nodes.append(
+                            GraphNode(
+                                id=prop_node_id,
+                                label=r["property_name"],
+                                node_type="property",
+                                properties={
+                                    "property_name": r["property_name"],
+                                    "canonical_unit": r["canonical_unit"],
+                                    "sample_value": disp_val,
+                                },
+                            )
+                        )
+
+                    edge_key = (m_node_id, prop_node_id, "HAS_PROPERTY")
+                    if edge_key not in edge_keys:
+                        edge_keys.add(edge_key)
+                        edges.append(
+                            GraphEdge(
+                                id=f"e_{len(edges)}",
+                                source=m_node_id,
+                                target=prop_node_id,
+                                edge_type="HAS_PROPERTY",
+                                label=f"{r['property_name']}: {disp_val}",
+                                properties={"display_value": disp_val},
+                            )
+                        )
+
+            # 4. 仅在显式请求 include_papers=True 时将论文加入宏观主图（避免平铺爆炸）
+            if include_papers:
+                papers = await self.list_papers(query=None, limit=30)
+                for p in papers:
+                    p_node_id = f"paper_{p.id}"
+                    linked_mats: list[MaterialRead] = []
+                    for m in materials:
+                        formula_clean = m.canonical_formula.lower()
+                        if formula_clean in p.title.lower() or (p.abstract and formula_clean in p.abstract.lower()):
+                            linked_mats.append(m)
+
+                    if linked_mats:
+                        if p_node_id not in node_ids:
+                            node_ids.add(p_node_id)
+                            nodes.append(
+                                GraphNode(
+                                    id=p_node_id,
+                                    label=p.title[:24] + "..." if len(p.title) > 26 else p.title,
+                                    node_type="paper",
+                                    properties={
+                                        "paper_id": str(p.id),
+                                        "title": p.title,
+                                        "doi": p.doi,
+                                        "journal": p.journal,
+                                        "year": p.publication_year,
+                                        "first_author": p.first_author,
+                                        "corresponding_author": p.corresponding_author,
+                                    },
+                                )
+                            )
+                        for lm in linked_mats:
+                            edge_key = (f"mat_{lm.id}", p_node_id, "EVIDENCED_BY")
+                            if edge_key not in edge_keys:
+                                edge_keys.add(edge_key)
+                                edges.append(
+                                    GraphEdge(
+                                        id=f"e_{len(edges)}",
+                                        source=f"mat_{lm.id}",
+                                        target=p_node_id,
+                                        edge_type="EVIDENCED_BY",
+                                        label="文献证据",
+                                    )
+                                )
+
+        mat_cnt = sum(1 for n in nodes if n.node_type == "material")
+        elem_cnt = sum(1 for n in nodes if n.node_type == "element")
+        paper_cnt = sum(1 for n in nodes if n.node_type == "paper")
+        prop_cnt = sum(1 for n in nodes if n.node_type == "property")
+        sys_cnt = sum(1 for n in nodes if n.node_type == "system")
+        author_cnt = sum(1 for n in nodes if n.node_type in ("author", "first_author", "corresponding_author"))
+        journal_cnt = sum(1 for n in nodes if n.node_type == "journal")
+
+        return KnowledgeGraphResponse(
+            nodes=nodes,
+            edges=edges,
+            summary=GraphSummary(
+                total_nodes=len(nodes),
+                total_edges=len(edges),
+                material_count=mat_cnt,
+                paper_count=paper_cnt,
+                element_count=elem_cnt,
+                property_count=prop_cnt,
+                system_count=sys_cnt,
+                author_count=author_cnt,
+                journal_count=journal_cnt,
+            ),
+        )

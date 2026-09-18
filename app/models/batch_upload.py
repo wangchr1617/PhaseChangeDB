@@ -92,12 +92,71 @@ class LiteratureAgentConfig(APIModel):
     enabled: bool = True
     available_models: list[str] = [
         "gemini-2.5-pro",
-        "gemini-2.5-flash",
-        "deepseek-r1-materials",
-        "local-pcm-fine-tuned",
     ]
     default_model: str = "gemini-2.5-pro"
     prompt_version: str = "pcm-extract-v2.1"
     ontology_version: str = "0.3.0"
     auto_staging_enabled: bool = True
     require_human_review: bool = True
+
+
+class YearCountItem(APIModel):
+    year: int
+    count: int
+
+
+class JournalCountItem(APIModel):
+    journal: str
+    count: int
+
+
+class AuthorCountItem(APIModel):
+    author: str
+    count: int
+
+
+class SystemCountItem(APIModel):
+    chemical_system: str
+    count: int
+
+
+class LiteratureStatsResponse(APIModel):
+    total_papers: int
+    year_distribution: list[YearCountItem]
+    journal_distribution: list[JournalCountItem]
+    author_distribution: list[AuthorCountItem]
+    system_distribution: list[SystemCountItem] = Field(default_factory=list)
+
+
+class GraphNode(APIModel):
+    id: str
+    label: str
+    node_type: str  # "material" | "element" | "paper" | "property"
+    properties: dict[str, Any] = Field(default_factory=dict)
+
+
+class GraphEdge(APIModel):
+    id: str
+    source: str
+    target: str
+    edge_type: str  # "CONTAINS_ELEMENT" | "MENTIONS" | "HAS_PROPERTY" | "AUTHORED"
+    label: str | None = None
+    properties: dict[str, Any] = Field(default_factory=dict)
+
+
+class GraphSummary(APIModel):
+    total_nodes: int
+    total_edges: int
+    material_count: int
+    paper_count: int
+    element_count: int
+    property_count: int
+    system_count: int = 0
+    author_count: int = 0
+    journal_count: int = 0
+
+
+class KnowledgeGraphResponse(APIModel):
+    nodes: list[GraphNode]
+    edges: list[GraphEdge]
+    summary: GraphSummary

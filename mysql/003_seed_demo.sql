@@ -1,4 +1,6 @@
 USE phasechangedb;
+SET NAMES utf8mb4;
+SET CHARACTER SET utf8mb4;
 
 -- MVP 演示数据。固定 UUID 便于本地环境重复识别，所有科学观测均关联原始证据。
 INSERT INTO ont_term (id, namespace, code, label, definition)

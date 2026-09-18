@@ -190,17 +190,17 @@ export function BatchUploadModal({ onClose, onSuccess }: BatchUploadModalProps) 
                 onDragLeave={handleDragLeave}
                 onDrop={handleDrop}
               >
-                <div className="dropzone-icon">📄</div>
+                <div className="dropzone-icon">📦</div>
                 <div className="dropzone-text">
-                  <strong>点击选择或将文献文件拖拽至此</strong>
-                  <p>支持批量多选 PDF、arXiv XML、BibTeX (.bib)、JSON 或纯文本文献源</p>
+                  <strong>点击选择或将文献文件 / 压缩包拖拽至此</strong>
+                  <p>支持多选 PDF、arXiv XML、BibTeX 或 <strong>.zip / .tar.gz 压缩包</strong>（自动安全解压并解析内含 PDF）</p>
                 </div>
                 <label className="file-select-btn">
-                  <span>选择本地文件 (支持多选)</span>
+                  <span>选择本地文件 / 压缩包 (多选)</span>
                   <input
                     type="file"
                     multiple
-                    accept=".pdf,.xml,.json,.bib,.txt"
+                    accept=".pdf,.xml,.json,.bib,.txt,.zip,.tar.gz,.tgz,.tar,application/zip,application/gzip,application/x-tar"
                     onChange={handleFileChange}
                     className="file-input-hidden"
                   />
@@ -221,12 +221,26 @@ export function BatchUploadModal({ onClose, onSuccess }: BatchUploadModalProps) 
               {previews.length > 0 && (
                 <div className="batch-preview-section">
                   <div className="preview-header">
-                    <h3>
-                      📋 解析结果核验与修正预览 ({previews.length} 篇)
-                    </h3>
-                    <span className="preview-sub">
-                      请核对抽取的标题、期刊、第一作者、通讯作者与 DOI。点击单元格可直接修正。
-                    </span>
+                    <div>
+                      <h3>
+                        📋 解析结果核验与修正预览 ({previews.length} 篇)
+                      </h3>
+                      <span className="preview-sub">
+                        请核对抽取的标题、期刊、第一作者、通讯作者与 DOI。点击单元格可直接修正。
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      className="button small secondary"
+                      onClick={() => {
+                        setPreviews([])
+                        setError(null)
+                        setUploadProgress(null)
+                      }}
+                      title="清空当前预览列表，重新选择文件"
+                    >
+                      🗑️ 全部取消 / 清空
+                    </button>
                   </div>
 
                   <div className="table-wrap batch-table-wrap">

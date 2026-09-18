@@ -121,6 +121,19 @@ def convert_to_canonical_unit(
         if factor is not None:
             return val_dec * factor
 
+    # 7. 潜热换算：目标为 J/g
+    if tgt in {"j/g", "j_g", "j g-1"}:
+        if src in {"j/g", "j_g", "j g-1", "j/g-1"}:
+            return val_dec
+        if src in {"kj/kg", "kj_kg"}:
+            return val_dec
+        if src in {"cal/g", "cal_g"}:
+            return val_dec * Decimal("4.184")
+        if src in {"kcal/kg"}:
+            return val_dec * Decimal("4.184")
+        if src in {"j/kg"}:
+            return val_dec * Decimal("0.001")
+
     return None
 
 

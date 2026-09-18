@@ -6,9 +6,12 @@
 
 from __future__ import annotations
 
+import io
 import json
 import re
+import tarfile
 import xml.etree.ElementTree as ET
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +21,93 @@ from app.models.batch_upload import ParsedPaperPreview
 
 DOI_REGEX = re.compile(r"\b10\.\d{4,9}/[-._;()/:A-Za-z0-9]+\b")
 ARXIV_ID_REGEX = re.compile(r"\b(\d{4}\.\d{4,5}(?:v\d+)?)\b")
+
+MAX_ARCHIVE_FILE_COUNT = 50
+MAX_SINGLE_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
+MAX_TOTAL_UNCOMPRESSED_SIZE = 200 * 1024 * 1024  # 200 MB
+
+
+def is_archive_filename(filename: str) -> bool:
+    fn = filename.lower()
+    return fn.endswith(".zip") or fn.endswith(".tar.gz") or fn.endswith(".tgz") or fn.endswith(".tar")
+
+
+def extract_archive_papers(filename: str, content: bytes) -> list[tuple[str, bytes]]:
+    """安全解压 .zip 或 .tar.gz 压缩包，提取其中的有效 PDF 文件。
+
+    安全机制：
+    1. 严格检查路径穿越 (Zip Slip 防护)；
+    2. 忽略 macOS 资源分支 (__MACOSX) 与隐藏文件；
+    3. 仅提取 .pdf 格式文献；
+    4. 限制单包文件数与总解压大小，防止 Zip 炸弹。
+    """
+    fn = filename.lower()
+    extracted: list[tuple[str, bytes]] = []
+    total_size = 0
+
+    if fn.endswith(".zip"):
+        try:
+            with zipfile.ZipFile(io.BytesIO(content)) as zf:
+                infolist = zf.infolist()
+                for info in infolist:
+                    if info.is_dir():
+                        continue
+                    # 路径穿越防护
+                    norm_path = Path(info.filename)
+                    if ".." in norm_path.parts or info.filename.startswith("/") or info.filename.startswith("\\"):
+                        raise ValueError(f"检测到潜在路径穿越风险文件名: {info.filename}")
+                    base_name = norm_path.name
+                    if base_name.startswith(".") or "__MACOSX" in norm_path.parts:
+                        continue
+                    if not base_name.lower().endswith(".pdf"):
+                        continue
+                    if len(extracted) >= MAX_ARCHIVE_FILE_COUNT:
+                        raise ValueError(f"压缩包内有效文献数量超过最大限制 ({MAX_ARCHIVE_FILE_COUNT} 篇)")
+                    if info.file_size > MAX_SINGLE_FILE_SIZE:
+                        raise ValueError(f"文件 {base_name} 解压后超过单个文件限制 (50MB)")
+                    total_size += info.file_size
+                    if total_size > MAX_TOTAL_UNCOMPRESSED_SIZE:
+                        raise ValueError("压缩包解压总数据量超过安全限制 (200MB)")
+                    file_bytes = zf.read(info)
+                    extracted.append((base_name, file_bytes))
+        except zipfile.BadZipFile:
+            raise ValueError(f"压缩包 {filename} 已损坏或不是合法的 ZIP 文件") from None
+
+    elif fn.endswith(".tar.gz") or fn.endswith(".tgz") or fn.endswith(".tar"):
+        mode = "r:gz" if (fn.endswith(".tar.gz") or fn.endswith(".tgz")) else "r:"
+        try:
+            with tarfile.open(fileobj=io.BytesIO(content), mode=mode) as tf:
+                for member in tf.getmembers():
+                    if not member.isfile():
+                        continue
+                    norm_path = Path(member.name)
+                    if ".." in norm_path.parts or member.name.startswith("/") or member.name.startswith("\\"):
+                        raise ValueError(f"检测到潜在路径穿越风险文件名: {member.name}")
+                    base_name = norm_path.name
+                    if base_name.startswith(".") or "__MACOSX" in norm_path.parts:
+                        continue
+                    if not base_name.lower().endswith(".pdf"):
+                        continue
+                    if len(extracted) >= MAX_ARCHIVE_FILE_COUNT:
+                        raise ValueError(f"压缩包内有效文献数量超过最大限制 ({MAX_ARCHIVE_FILE_COUNT} 篇)")
+                    if member.size > MAX_SINGLE_FILE_SIZE:
+                        raise ValueError(f"文件 {base_name} 解压后超过单个文件限制 (50MB)")
+                    total_size += member.size
+                    if total_size > MAX_TOTAL_UNCOMPRESSED_SIZE:
+                        raise ValueError("压缩包解压总数据量超过安全限制 (200MB)")
+                    f = tf.extractfile(member)
+                    if f is None:
+                        continue
+                    extracted.append((base_name, f.read()))
+        except tarfile.TarError as e:
+            raise ValueError(f"压缩包 {filename} 解压失败或格式损坏: {str(e)}") from e
+    else:
+        raise ValueError(f"不支持的压缩包格式: {filename}，仅支持 .zip 与 .tar.gz")
+
+    if not extracted:
+        raise ValueError(f"压缩包 {filename} 中未发现有效的 .pdf 文献文件")
+
+    return extracted
 
 
 def _clean_text(s: str | None) -> str | None:

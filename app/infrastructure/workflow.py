@@ -11,6 +11,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid6 import uuid7
 
+from app.domain.material_normalizer import is_valid_chemical_alias, normalize_formula
 from app.domain.workflow import (
     DomainConflictError,
     EntityNotFoundError,
@@ -231,24 +232,38 @@ class MySQLWorkflowRepository:
                     raise EntityNotFoundError(f"指定的 material_id {material_id} 不存在")
             else:
                 assert body.material is not None
+                norm = normalize_formula(body.material.canonical_formula)
+                canonical_formula = norm.canonical_formula if norm.is_valid else body.material.canonical_formula
+                chemical_system = norm.chemical_system if norm.is_valid else body.material.chemical_system
+
                 existing_mat = (
                     await self.session.execute(
                         text(
                             """
                             SELECT id FROM mat_material
-                            WHERE canonical_formula = :formula AND chemical_system = :system
+                            WHERE canonical_formula = :formula
                             """
                         ),
-                        {
-                            "formula": body.material.canonical_formula,
-                            "system": body.material.chemical_system,
-                        },
+                        {"formula": canonical_formula},
                     )
                 ).mappings().first()
+
+                aliases_to_insert = {a for a in body.material.aliases if is_valid_chemical_alias(a)}
+                if body.material.canonical_formula != canonical_formula and is_valid_chemical_alias(body.material.canonical_formula):
+                    aliases_to_insert.add(body.material.canonical_formula)
+                aliases_to_insert.update(a for a in norm.aliases if is_valid_chemical_alias(a))
 
                 if existing_mat:
                     material_id = _uuid(existing_mat["id"])
                     assert material_id is not None
+                    for alias in aliases_to_insert:
+                        await self.session.execute(
+                            text(
+                                "INSERT IGNORE INTO mat_material_alias (id, material_id, alias) "
+                                "VALUES (:id, :material_id, :alias)"
+                            ),
+                            {"id": uuid7().bytes, "material_id": material_id.bytes, "alias": alias},
+                        )
                 else:
                     material_id = uuid7()
                     await self.session.execute(
@@ -263,20 +278,22 @@ class MySQLWorkflowRepository:
                         ),
                         {
                             "id": material_id.bytes,
-                            "canonical_formula": body.material.canonical_formula,
+                            "canonical_formula": canonical_formula,
                             "reduced_formula": body.material.reduced_formula,
-                            "chemical_system": body.material.chemical_system,
-                            "family_id": body.material.material_family_term_id.bytes
-                            if body.material.material_family_term_id
-                            else None,
-                            "name": body.material.name,
+                            "chemical_system": chemical_system,
+                            "family_id": (
+                                body.material.material_family_term_id.bytes
+                                if body.material.material_family_term_id
+                                else None
+                            ),
+                            "name": body.material.name or canonical_formula,
                             "description": body.material.description,
                         },
                     )
-                    for alias in dict.fromkeys(body.material.aliases):
+                    for alias in aliases_to_insert:
                         await self.session.execute(
                             text(
-                                "INSERT INTO mat_material_alias (id, material_id, alias) "
+                                "INSERT IGNORE INTO mat_material_alias (id, material_id, alias) "
                                 "VALUES (:id, :material_id, :alias)"
                             ),
                             {"id": uuid7().bytes, "material_id": material_id.bytes, "alias": alias},
@@ -286,7 +303,7 @@ class MySQLWorkflowRepository:
                         aggregate_type="Material",
                         aggregate_id=material_id,
                         event_type="MaterialCreated",
-                        payload={"id": str(material_id), "formula": body.material.canonical_formula},
+                        payload={"id": str(material_id), "formula": canonical_formula},
                     )
 
             # 8. 实体样品 (Sample)

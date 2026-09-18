@@ -5,14 +5,20 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid6 import uuid7
 
-from app.application.literature_parser import parse_uploaded_paper
+from app.application.literature_parser import (
+    extract_archive_papers,
+    is_archive_filename,
+    parse_uploaded_paper,
+)
 from app.infrastructure.database import get_session
 from app.infrastructure.mysql_catalog import MySQLCatalogRepository
 from app.models.batch_upload import (
     BatchIngestRequest,
     BatchIngestResponse,
     BatchUploadResponse,
+    KnowledgeGraphResponse,
     LiteratureAgentConfig,
+    LiteratureStatsResponse,
     ObservationConflictGroup,
     ParsedPaperPreview,
 )
@@ -44,10 +50,26 @@ async def list_materials(
     repository: Repository,
     q: str | None = None,
     elements: str | None = Query(default=None, description="逗号分隔的元素列表，如 Ge,Sb,Te"),
+    min_tc: float | None = Query(default=None, description="相变温度/结晶温度下限 (K)"),
+    max_tc: float | None = Query(default=None, description="相变温度/结晶温度上限 (K)"),
+    min_latent_heat: float | None = Query(default=None, description="潜热下限 (J/g)"),
+    max_latent_heat: float | None = Query(default=None, description="潜热上限 (J/g)"),
+    low_toxicity: bool | None = Query(default=None, description="是否筛选低毒性材料"),
+    cost_effective: bool | None = Query(default=None, description="是否筛选成本可控材料"),
     limit: int = Query(default=50, ge=1, le=200),
 ) -> CursorPage[MaterialRead]:
     elem_list = [e.strip() for e in elements.split(",") if e.strip()] if elements else None
-    items = await repository.list_materials(q, limit, elements=elem_list)
+    items = await repository.list_materials(
+        query=q,
+        limit=limit,
+        elements=elem_list,
+        min_tc=min_tc,
+        max_tc=max_tc,
+        min_latent_heat=min_latent_heat,
+        max_latent_heat=max_latent_heat,
+        low_toxicity=low_toxicity,
+        cost_effective=cost_effective,
+    )
     return CursorPage(items=items, next_cursor=None, has_more=False)
 
 
@@ -102,35 +124,58 @@ async def get_paper(paper_id: UUID, repository: Repository) -> PaperRead:
 async def batch_upload_papers(
     files: Annotated[list[UploadFile], File(...)],
 ) -> BatchUploadResponse:
-
     items: list[ParsedPaperPreview] = []
     parsed_cnt = 0
     failed_cnt = 0
 
     for file in files:
+        fname = file.filename or "unknown_paper"
         try:
             content = await file.read()
-            preview = parse_uploaded_paper(file.filename or "unknown_paper", content)
-            items.append(preview)
-            if preview.status == "parsed":
-                parsed_cnt += 1
+            if is_archive_filename(fname):
+                try:
+                    extracted_files = extract_archive_papers(fname, content)
+                    for sub_fname, sub_content in extracted_files:
+                        preview = parse_uploaded_paper(sub_fname, sub_content)
+                        items.append(preview)
+                        if preview.status == "parsed":
+                            parsed_cnt += 1
+                        else:
+                            failed_cnt += 1
+                except Exception as arch_err:
+                    failed_cnt += 1
+                    items.append(
+                        ParsedPaperPreview(
+                            file_id=str(uuid7()),
+                            filename=fname,
+                            file_size=len(content),
+                            title=fname,
+                            status="failed",
+                            error_message=f"压缩包解压处理失败: {str(arch_err)}",
+                        )
+                    )
             else:
-                failed_cnt += 1
+                preview = parse_uploaded_paper(fname, content)
+                items.append(preview)
+                if preview.status == "parsed":
+                    parsed_cnt += 1
+                else:
+                    failed_cnt += 1
         except Exception as e:
             failed_cnt += 1
             items.append(
                 ParsedPaperPreview(
                     file_id=str(uuid7()),
-                    filename=file.filename or "unknown_paper",
+                    filename=fname,
                     file_size=0,
-                    title=file.filename or "unknown_paper",
+                    title=fname,
                     status="failed",
                     error_message=str(e),
                 )
             )
 
     return BatchUploadResponse(
-        total_files=len(files),
+        total_files=len(items),
         parsed_count=parsed_cnt,
         failed_count=failed_cnt,
         items=items,
@@ -186,4 +231,27 @@ async def update_config(body: AppConfigUpdate, repository: Repository) -> AppCon
 @router.get("/agents/literature-parser/config", response_model=LiteratureAgentConfig, tags=["agent"])
 async def get_literature_agent_config() -> LiteratureAgentConfig:
     return LiteratureAgentConfig()
+
+
+@router.get("/literature/stats", response_model=LiteratureStatsResponse, tags=["literature"])
+async def get_literature_stats(repository: Repository) -> LiteratureStatsResponse:
+    return await repository.get_literature_stats()
+
+
+@router.get("/knowledge-graph/graph", response_model=KnowledgeGraphResponse, tags=["knowledge"])
+async def get_knowledge_graph(
+    repository: Repository,
+    element: str | None = None,
+    material_id: str | None = None,
+    include_papers: bool = Query(default=False),
+    subgraph: str | None = Query(default=None),
+    limit: int = Query(default=60, ge=1, le=200),
+) -> KnowledgeGraphResponse:
+    return await repository.get_knowledge_graph(
+        element=element,
+        material_id=material_id,
+        include_papers=include_papers,
+        subgraph=subgraph,
+        limit=limit,
+    )
 

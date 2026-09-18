@@ -59,6 +59,16 @@ scripts/clean_and_normalize_units.py
 scripts/download_pcm_arxiv.py
 scripts/extract_arxiv_paper.py
 scripts/reingest_local_papers.py
+scripts/clean_mojibake_and_aliases.py
+scripts/download_pcm_literature.py
+scripts/fix_measurement_terms_mojibake.py
+scripts/normalize_materials_and_variants.py
+
+# 本地备份与归档目录
+backups/
+_archive_temp_scripts/
+*.bak
+*.backup
 
 # 依赖与额外环境
 node_modules/

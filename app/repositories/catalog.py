@@ -4,6 +4,8 @@ from app.models.batch_upload import (
     BatchIngestItem,
     BatchIngestRequest,
     BatchIngestResponse,
+    KnowledgeGraphResponse,
+    LiteratureStatsResponse,
     ObservationConflictGroup,
 )
 from app.models.config import AppConfigRead, AppConfigUpdate
@@ -18,7 +20,16 @@ class CatalogRepository(Protocol):
     async def dashboard(self) -> DashboardRead: ...
 
     async def list_materials(
-        self, query: str | None, limit: int, elements: list[str] | None = None
+        self,
+        query: str | None = None,
+        limit: int = 50,
+        elements: list[str] | None = None,
+        min_tc: float | None = None,
+        max_tc: float | None = None,
+        min_latent_heat: float | None = None,
+        max_latent_heat: float | None = None,
+        low_toxicity: bool | None = None,
+        cost_effective: bool | None = None,
     ) -> list[MaterialRead]: ...
 
     async def get_existing_elements(self) -> list[str]: ...
@@ -51,3 +62,14 @@ class CatalogRepository(Protocol):
     async def update_config(self, body: AppConfigUpdate) -> AppConfigRead: ...
 
     async def get_material_conflicts(self, material_id: str) -> list[ObservationConflictGroup]: ...
+
+    async def get_literature_stats(self) -> LiteratureStatsResponse: ...
+
+    async def get_knowledge_graph(
+        self,
+        element: str | None = None,
+        material_id: str | None = None,
+        include_papers: bool = False,
+        subgraph: str | None = None,
+        limit: int = 60,
+    ) -> KnowledgeGraphResponse: ...

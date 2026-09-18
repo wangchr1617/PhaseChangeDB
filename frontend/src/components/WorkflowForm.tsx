@@ -178,10 +178,26 @@ export function WorkflowForm({
 
   return (
     <form className="workflow-form card" onSubmit={handleSubmit} noValidate>
-      <h2>人工登记正式科研记录（Human Intake）</h2>
-      <p className="hint">
-        单次原子事务提交：文献制品 → 材料与样品 → 实验测量 → 证据溯源片段 → 科学观测值（初始状态为 HUMAN_REVIEWED）。AI 提取候选数据必须通过提取暂存与人工晋升闭环入库。
-      </p>
+      <div className="workflow-intake-header">
+        <h2>人工登记正式科研记录（Human Intake）</h2>
+        <div className="intake-pipeline-steps">
+          <div className="pipeline-step-badge">① 文献制品元数据</div>
+          <span className="step-arrow">→</span>
+          <div className="pipeline-step-badge">② 材料与实验样品</div>
+          <span className="step-arrow">→</span>
+          <div className="pipeline-step-badge">③ 实验测量与观测</div>
+          <span className="step-arrow">→</span>
+          <div className="pipeline-step-badge">④ 证据原文锚定</div>
+        </div>
+        <div className="intake-guidelines-box">
+          <p className="guideline-lead">
+            <strong>原子事务提交：</strong>所有实体关系与操作审计记录将在同一个 MySQL 权威事务中原子提交，科学观测初始验证状态定级为 <code>HUMAN_REVIEWED</code>。
+          </p>
+          <p className="guideline-sub">
+            <strong>科学数据不变量：</strong><code>Material</code> 表达材料化学组成与身份，<code>Sample</code> 表达具象工艺制备实体；AI 提取候选数据必须通过提取暂存与人工晋升闭环入库。
+          </p>
+        </div>
+      </div>
 
       {/* Reviewer Token 区域 */}
       <fieldset className="form-section highlight-box">
@@ -493,6 +509,7 @@ export function WorkflowForm({
               onChange={(e) => setMeasTypeTermId(e.target.value)}
               disabled={isSubmitting || measurementTypes.length === 0}
             >
+              <option value="">请选择测量技术 / 方法（如 DSC、原位变温电阻等）...</option>
               {measurementTypes.map((t) => (
                 <option key={t.id} value={t.id}>
                   {t.label} ({t.code})

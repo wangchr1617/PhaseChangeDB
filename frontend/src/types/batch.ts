@@ -94,3 +94,113 @@ export interface LiteratureAgentConfig {
   auto_staging_enabled: boolean
   require_human_review: boolean
 }
+
+export interface YearCountItem {
+  year: number
+  count: number
+}
+
+export interface JournalCountItem {
+  journal: string
+  count: number
+}
+
+export interface AuthorCountItem {
+  author: string
+  count: number
+}
+
+export interface SystemCountItem {
+  chemical_system: string
+  count: number
+}
+
+export interface LiteratureStatsResponse {
+  total_papers: number
+  year_distribution: YearCountItem[]
+  journal_distribution: JournalCountItem[]
+  author_distribution: AuthorCountItem[]
+  system_distribution: SystemCountItem[]
+}
+
+export interface GraphNode {
+  id: string
+  label: string
+  node_type:
+    | 'material'
+    | 'element'
+    | 'system'
+    | 'property'
+    | 'paper'
+    | 'first_author'
+    | 'corresponding_author'
+    | 'author'
+    | 'journal'
+  properties?: Record<string, unknown>
+  // 仿真动力学计算属性
+  x?: number
+  y?: number
+  vx?: number
+  vy?: number
+}
+
+export interface GraphEdge {
+  id: string
+  source: string
+  target: string
+  edge_type: string
+  label?: string | null
+  properties?: Record<string, unknown>
+}
+
+export interface GraphSummary {
+  total_nodes: number
+  total_edges: number
+  material_count: number
+  paper_count: number
+  element_count: number
+  property_count: number
+  system_count?: number
+  author_count?: number
+  journal_count?: number
+}
+
+export interface KnowledgeGraphResponse {
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+  summary: GraphSummary
+}
+
+export interface VariantObservationRead {
+  id: string
+  property_code: string
+  property_name: string
+  value?: number | string | boolean | null
+  unit?: string | null
+  display_value?: string | null
+  verification_status: string
+}
+
+export interface MaterialVariantRead {
+  sample_id: string
+  sample_label?: string | null
+  nominal_formula: string
+  original_name?: string | null
+  doping_element?: string | null
+  doping_concentration?: number | null
+  preparation_method?: string | null
+  annealing_temperature?: string | null
+  pressure?: string | null
+  test_method?: string | null
+  crystal_phase?: string | null
+  atmosphere?: string | null
+  cooling_rate?: string | null
+  paper_id?: string | null
+  paper_title?: string | null
+  paper_doi?: string | null
+  first_author?: string | null
+  corresponding_author?: string | null
+  journal?: string | null
+  publication_year?: number | null
+  observations: VariantObservationRead[]
+}
