@@ -1,9 +1,12 @@
+import os
+from pathlib import Path
 from uuid import uuid4
 
 from fastapi import FastAPI, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -29,6 +32,11 @@ app.add_middleware(
 app.include_router(mvp.router)
 app.include_router(workflow.router)
 app.include_router(extraction.router)
+
+# 兼容前端在无 Nginx 反代直连场景（直接请求 /api/v1/*）
+app.include_router(mvp.router, prefix="/api")
+app.include_router(workflow.router, prefix="/api")
+app.include_router(extraction.router, prefix="/api")
 
 
 STATUS_TITLE_MAP = {
@@ -151,6 +159,8 @@ async def health() -> dict[str, str]:
 @app.get("/ready", tags=["system"], summary="就绪探针（Readiness Probe）")
 async def ready(response: Response) -> dict[str, str]:
     """系统就绪探针，探测核心数据库真实可用性。"""
+    if os.environ.get("PCM_DEMO_MODE") == "1":
+        return {"status": "ready", "database": "demo_mode"}
     try:
         async with session_factory() as session:
             await session.execute(text("SELECT 1"))
@@ -158,3 +168,9 @@ async def ready(response: Response) -> dict[str, str]:
     except Exception:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
         return {"status": "not_ready", "database": "unavailable"}
+
+
+# 挂载前端预编译静态页面（开箱即用，免 Nginx / Node.js）
+static_dir = Path(__file__).resolve().parent / "static"
+if static_dir.is_dir():
+    app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")

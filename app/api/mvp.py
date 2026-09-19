@@ -11,6 +11,7 @@ from app.application.literature_parser import (
     is_archive_filename,
     parse_uploaded_paper,
 )
+from app.demo.demo_provider import DemoCatalogRepository, get_demo_repository
 from app.infrastructure.database import get_session
 from app.infrastructure.mysql_catalog import MySQLCatalogRepository
 from app.models.batch_upload import (
@@ -39,11 +40,15 @@ from app.models.search import SearchRequest, SearchResponse
 router = APIRouter(prefix="/v1")
 
 
-async def get_repository(session: Annotated[AsyncSession, Depends(get_session)]) -> MySQLCatalogRepository:
+async def get_repository(
+    session: Annotated[AsyncSession | None, Depends(get_session)],
+) -> MySQLCatalogRepository | DemoCatalogRepository:
+    if session is None:
+        return get_demo_repository()
     return MySQLCatalogRepository(session)
 
 
-Repository = Annotated[MySQLCatalogRepository, Depends(get_repository)]
+Repository = Annotated[MySQLCatalogRepository | DemoCatalogRepository, Depends(get_repository)]
 
 
 @router.get("/dashboard", response_model=DashboardRead, tags=["dashboard"])

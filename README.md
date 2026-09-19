@@ -6,6 +6,33 @@ PhaseChangeDB 是面向相变材料的、以证据为基础的科学数据与知
 
 ---
 
+## 🚀 快速上手 (Quick Start)
+
+为了让不同背景的研究人员（无论是实验科学家还是计算研究者）均能零门槛体验，PhaseChangeDB 提供了三种开箱即用的运行方式：
+
+### 方式一：GitHub Codespaces 云端一键运行（完全免安装 · 论文审稿推荐）
+无需在电脑上配置任何环境，直接在网页浏览器中秒级拉起专属云端沙箱（支持在浏览器中直接上传/拖拽本地 PDF 文献）：
+
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/wangchr1617/PhaseChangeDB)
+
+### 方式二：本地 Python 单命令直启（免 Docker · 免 MySQL · 免 Node.js）
+电脑只要安装了 Python 3.10+，克隆代码后一条命令启动，系统会自动在默认浏览器打开操作界面：
+```bash
+python run_demo.py
+```
+> **设计亮点**：
+> - 仓库内置了仅 460 KB 的预编译生产前端，无需安装 Node.js/pnpm 编译；
+> - 若本地未运行 MySQL 8.4，启动器将自动无缝切换至【内置科学演示模式】，包含真实的 GeTe / Sb₂Te₃ 核心物性分布、3D 知识图谱与文献证据链，支持即时交互探索。
+
+### 方式三：Docker Compose 完整集群部署（开发与生产部署）
+适合需要完整权威数据库事务与长期运维的场景：
+```bash
+docker compose up -d
+# 访问地址：http://localhost:8080 (Web 交互界面) 或 http://localhost:8000/docs (Swagger API 契约)
+```
+
+---
+
 ## MVP v0.2.0 核心功能
 
 1. **科研数据录入与严格人工确认**：

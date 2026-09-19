@@ -1,0 +1,34 @@
+{
+  "name": "PhaseChangeDB Cloud Sandbox",
+  "image": "mcr.microsoft.com/devcontainers/universal:2",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "forwardPorts": [8080, 8000, 3306],
+  "portsAttributes": {
+    "8080": {
+      "label": "PhaseChangeDB Web UI",
+      "onAutoForward": "openBrowser"
+    },
+    "8000": {
+      "label": "PhaseChangeDB API",
+      "onAutoForward": "silent"
+    },
+    "3306": {
+      "label": "MySQL Database",
+      "onAutoForward": "silent"
+    }
+  },
+  "postStartCommand": "docker compose up -d",
+  "customizations": {
+    "vscode": {
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "zsh"
+      },
+      "extensions": [
+        "ms-python.python",
+        "charliermarsh.ruff"
+      ]
+    }
+  }
+}

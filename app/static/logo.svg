@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" width="100%" height="100%" fill="none">
+  <defs>
+    <!-- 渐变定义 -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#090d16" />
+      <stop offset="100%" stop-color="#111827" />
+    </linearGradient>
+
+    <linearGradient id="crystalGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="50%" stop-color="#6366f1" />
+      <stop offset="100%" stop-color="#a855f7" />
+    </linearGradient>
+
+    <linearGradient id="laserPulseGrad" x1="0%" y1="50%" x2="100%" y2="50%">
+      <stop offset="0%" stop-color="#f59e0b" stop-opacity="0" />
+      <stop offset="50%" stop-color="#fbbf24" stop-opacity="0.9" />
+      <stop offset="100%" stop-color="#ef4444" stop-opacity="0" />
+    </linearGradient>
+
+    <radialGradient id="nodeGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.8" />
+      <stop offset="100%" stop-color="#0284c7" stop-opacity="0" />
+    </radialGradient>
+
+    <radialGradient id="amorphousGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#f43f5e" stop-opacity="0.6" />
+      <stop offset="100%" stop-color="#881337" stop-opacity="0" />
+    </radialGradient>
+
+    <filter id="glowFilter" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="3" result="blur" />
+      <feMerge>
+        <feMergeNode in="blur" />
+        <feMergeNode in="SourceGraphic" />
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- 外框圆角基底 -->
+  <rect x="4" y="4" width="152" height="152" rx="36" fill="url(#bgGrad)" stroke="#1e293b" stroke-width="2" />
+
+  <!-- 相变光热脉冲能量波环 (Phase Change Thermal Transition Wave) -->
+  <circle cx="80" cy="80" r="62" stroke="#1e293b" stroke-width="1.5" stroke-dasharray="4 6" opacity="0.6" />
+  <circle cx="80" cy="80" r="48" stroke="url(#laserPulseGrad)" stroke-width="2.5" opacity="0.75" />
+
+  <!-- 左侧：非晶态（Disordered/Amorphous Covalent Clusters） -->
+  <g opacity="0.85">
+    <circle cx="48" cy="62" r="14" fill="url(#amorphousGlow)" />
+    <!-- 乱序共价键网格 -->
+    <path d="M42 54 L52 66 M42 78 L54 66 M32 64 L42 54 M54 66 L65 58" stroke="#f43f5e" stroke-width="1.6" stroke-linecap="round" stroke-dasharray="2 3" opacity="0.7" />
+    <!-- 乱序原子簇 -->
+    <circle cx="42" cy="54" r="4" fill="#fb7185" />
+    <circle cx="54" cy="66" r="3.5" fill="#f43f5e" />
+    <circle cx="32" cy="64" r="3" fill="#fda4af" opacity="0.8" />
+    <circle cx="42" cy="78" r="3.5" fill="#f43f5e" />
+    <circle cx="65" cy="58" r="4" fill="#fb7185" />
+  </g>
+
+  <!-- 中央向右：晶态有序岩盐/六方相点阵 (Crystalline Metastable Rocksalt Lattice) -->
+  <!-- 晶体八面体/立方结构棱线 -->
+  <g filter="url(#glowFilter)">
+    <!-- 晶格外框连接线 -->
+    <polygon points="80,34 116,55 116,97 80,118 44,97 44,55" fill="none" stroke="#334155" stroke-width="1.5" />
+    
+    <!-- 内层三维八面体配位共振键网络 (Resonant Bonding Bonds) -->
+    <line x1="80" y1="34" x2="80" y2="76" stroke="url(#crystalGrad)" stroke-width="2.2" stroke-linecap="round" />
+    <line x1="116" y1="55" x2="80" y2="76" stroke="url(#crystalGrad)" stroke-width="2.2" stroke-linecap="round" />
+    <line x1="116" y1="97" x2="80" y2="76" stroke="url(#crystalGrad)" stroke-width="2.2" stroke-linecap="round" />
+    <line x1="80" y1="118" x2="80" y2="76" stroke="url(#crystalGrad)" stroke-width="2.2" stroke-linecap="round" />
+    <line x1="44" y1="97" x2="80" y2="76" stroke="url(#crystalGrad)" stroke-width="2.2" stroke-linecap="round" />
+    <line x1="44" y1="55" x2="80" y2="76" stroke="url(#crystalGrad)" stroke-width="2.2" stroke-linecap="round" />
+
+    <!-- 侧面立方晶胞透视线 -->
+    <line x1="80" y1="34" x2="116" y2="97" stroke="#38bdf8" stroke-width="1.2" stroke-dasharray="3 3" opacity="0.6" />
+    <line x1="116" y1="55" x2="80" y2="118" stroke="#38bdf8" stroke-width="1.2" stroke-dasharray="3 3" opacity="0.6" />
+    <line x1="44" y1="55" x2="80" y2="118" stroke="#6366f1" stroke-width="1.2" stroke-dasharray="3 3" opacity="0.6" />
+  </g>
+
+  <!-- 晶态关键原子节点 (Ge / Sb / Te 原子) -->
+  <!-- 核心配位中心原子 -->
+  <circle cx="80" cy="76" r="16" fill="url(#nodeGlow)" />
+  <circle cx="80" cy="76" r="6" fill="#38bdf8" stroke="#ffffff" stroke-width="1.8" />
+
+  <!-- 外围有序晶格原子点 -->
+  <circle cx="80" cy="34" r="5" fill="#818cf8" stroke="#c7d2fe" stroke-width="1.5" />
+  <circle cx="116" cy="55" r="5.5" fill="#38bdf8" stroke="#bae6fd" stroke-width="1.5" />
+  <circle cx="116" cy="97" r="5" fill="#c084fc" stroke="#f3e8ff" stroke-width="1.5" />
+  <circle cx="80" cy="118" r="5.5" fill="#38bdf8" stroke="#bae6fd" stroke-width="1.5" />
+  <circle cx="44" cy="97" r="4.5" fill="#818cf8" stroke="#c7d2fe" stroke-width="1.5" />
+  <circle cx="44" cy="55" r="4" fill="#a855f7" stroke="#e9d5ff" stroke-width="1.5" />
+
+  <!-- 动态相变微光耀斑 (Switching Flash) -->
+  <path d="M74 76 Q80 73 86 76 Q80 79 74 76 Z" fill="#ffffff" />
+  <circle cx="98" cy="65.5" r="2.5" fill="#38bdf8" />
+  <circle cx="98" cy="86.5" r="2.5" fill="#818cf8" />
+  <circle cx="62" cy="86.5" r="2.2" fill="#c084fc" />
+  <circle cx="62" cy="65.5" r="2.2" fill="#f43f5e" />
+</svg>
