@@ -248,8 +248,11 @@ class MySQLWorkflowRepository:
                     )
                 ).mappings().first()
 
-                aliases_to_insert = {a for a in body.material.aliases if is_valid_chemical_alias(a)}
-                if body.material.canonical_formula != canonical_formula and is_valid_chemical_alias(body.material.canonical_formula):
+                aliases_to_insert: set[str] = set()
+                if (
+                    body.material.canonical_formula != canonical_formula
+                    and is_valid_chemical_alias(body.material.canonical_formula)
+                ):
                     aliases_to_insert.add(body.material.canonical_formula)
                 aliases_to_insert.update(a for a in norm.aliases if is_valid_chemical_alias(a))
 
@@ -366,9 +369,11 @@ class MySQLWorkflowRepository:
                     """
                     INSERT INTO exp_measurement
                       (id, sample_id, measurement_type_term_id, instrument,
-                       temperature_value, temperature_unit, source_paper_id, evidence_id)
+                       temperature_value, temperature_unit, heating_rate_value, heating_rate_unit,
+                       source_paper_id, evidence_id)
                     VALUES (:id, :sample_id, :measurement_type_term_id, :instrument,
-                            :temperature_value, :temperature_unit, :paper_id, :evidence_id)
+                            :temperature_value, :temperature_unit, :heating_val, :heating_unit,
+                            :paper_id, :evidence_id)
                     """
                 ),
                 {
@@ -378,6 +383,8 @@ class MySQLWorkflowRepository:
                     "instrument": body.measurement.instrument,
                     "temperature_value": body.measurement.temperature_value,
                     "temperature_unit": body.measurement.temperature_unit,
+                    "heating_val": body.measurement.heating_rate_value,
+                    "heating_unit": body.measurement.heating_rate_unit,
                     "paper_id": paper_id.bytes,
                     "evidence_id": evidence_id.bytes,
                 },

@@ -10,8 +10,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 
 # 周期表有效元素集合
 VALID_ELEMENTS: set[str] = {

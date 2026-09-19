@@ -1,10 +1,8 @@
 """材料名称归一化、别名映射、掺杂/后缀剥离及科学判定单元测试。"""
 
 from decimal import Decimal
-import pytest
 
 from app.domain.material_normalizer import (
-    extract_elements,
     is_cost_effective,
     is_low_toxicity,
     normalize_formula,

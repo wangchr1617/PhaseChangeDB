@@ -618,7 +618,9 @@ class MySQLExtractionRepository:
             else:
                 assert candidate_data.material is not None
                 norm = normalize_formula(candidate_data.material.canonical_formula)
-                canonical_formula = norm.canonical_formula if norm.is_valid else candidate_data.material.canonical_formula
+                canonical_formula = (
+                    norm.canonical_formula if norm.is_valid else candidate_data.material.canonical_formula
+                )
                 chemical_system = norm.chemical_system if norm.is_valid else candidate_data.material.chemical_system
 
                 existing_mat = (
@@ -718,8 +720,10 @@ class MySQLExtractionRepository:
                     """
                     INSERT INTO exp_measurement
                       (id, sample_id, measurement_type_term_id, instrument,
-                       temperature_value, temperature_unit, source_paper_id, evidence_id)
-                    VALUES (:id, :sample_id, :type_id, :instrument, :temp_val, :temp_unit, :paper_id, :evd_id)
+                       temperature_value, temperature_unit, heating_rate_value, heating_rate_unit,
+                       source_paper_id, evidence_id)
+                    VALUES (:id, :sample_id, :type_id, :instrument, :temp_val, :temp_unit,
+                            :heating_val, :heating_unit, :paper_id, :evd_id)
                     """
                 ),
                 {
@@ -729,6 +733,8 @@ class MySQLExtractionRepository:
                     "instrument": candidate_data.measurement.instrument,
                     "temp_val": candidate_data.measurement.temperature_value,
                     "temp_unit": candidate_data.measurement.temperature_unit,
+                    "heating_val": candidate_data.measurement.heating_rate_value,
+                    "heating_unit": candidate_data.measurement.heating_rate_unit,
                     "paper_id": paper_id.bytes,
                     "evd_id": evidence_id.bytes,
                 },

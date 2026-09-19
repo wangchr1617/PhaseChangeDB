@@ -31,6 +31,8 @@ const TYPE_CONFIG: Record<
   corresponding_author: { label: '通讯作者', color: '#10b981', radius: 18, icon: '✉️' },
   author: { label: '科研作者', color: '#eab308', radius: 18, icon: '👤' },
   journal: { label: '收录期刊', color: '#ec4899', radius: 19, icon: '📖' },
+  dopant: { label: '掺杂元素', color: '#8b5cf6', radius: 18, icon: '🧪' },
+  observation: { label: '实测物性', color: '#10b981', radius: 17, icon: '⚡' },
 }
 
 export function KnowledgeGraphPlaceholder({ onSelectMaterial, onSelectPaper }: KnowledgeGraphProps) {
@@ -40,8 +42,12 @@ export function KnowledgeGraphPlaceholder({ onSelectMaterial, onSelectPaper }: K
   const [selectedElement, setSelectedElement] = useState<string>('')
   const [selectedNode, setSelectedNode] = useState<SimNode | null>(null)
 
-  // 知识图谱分层模式：'macro' (宏观科学骨干) vs 'literature' (材料文献与作者证据子图谱)
-  const [graphMode, setGraphMode] = useState<'macro' | 'literature'>('macro')
+  // 关联子图聚焦模式：选择节点后仅展示其 1/2/3 级关联子图
+  const [focusNode, setFocusNode] = useState<SimNode | null>(null)
+  const [associationLevel, setAssociationLevel] = useState<1 | 2 | 3 | 'all'>('all')
+
+  // 知识图谱分层模式：'macro' (宏观科学骨干) vs 'literature' (材料文献与作者证据子图谱) vs 'fine_grained' (细粒度物性证据链)
+  const [graphMode, setGraphMode] = useState<'macro' | 'literature' | 'fine_grained'>('macro')
   const [activeMaterial, setActiveMaterial] = useState<{ id: string; formula: string } | null>(null)
 
   // 子图谱内的过滤条件
@@ -59,6 +65,8 @@ export function KnowledgeGraphPlaceholder({ onSelectMaterial, onSelectPaper }: K
     corresponding_author: true,
     author: true,
     journal: true,
+    dopant: true,
+    observation: true,
   })
 
   // 画布变换状态：平移与缩放
@@ -80,7 +88,7 @@ export function KnowledgeGraphPlaceholder({ onSelectMaterial, onSelectPaper }: K
 
   // 获取后端图谱数据
   const fetchGraphData = useCallback(async (
-    mode: 'macro' | 'literature',
+    mode: 'macro' | 'literature' | 'fine_grained',
     elem?: string,
     targetMat?: { id: string; formula: string } | null
   ) => {
@@ -88,8 +96,13 @@ export function KnowledgeGraphPlaceholder({ onSelectMaterial, onSelectPaper }: K
     setError(null)
     setSelectedNode(null)
     try {
-      let url = `${API_BASE}/v1/knowledge-graph/graph?limit=80`
-      if (mode === 'literature' && targetMat) {
+      let url = `${API_BASE}/v1/knowledge-graph/graph?limit=100`
+      if (mode === 'fine_grained') {
+        url += '&subgraph=fine_grained'
+        if (targetMat) {
+          url += `&material_id=${encodeURIComponent(targetMat.id)}`
+        }
+      } else if (mode === 'literature' && targetMat) {
         url += `&material_id=${encodeURIComponent(targetMat.id)}&subgraph=literature`
       } else {
         url += '&include_papers=false'
@@ -109,11 +122,11 @@ export function KnowledgeGraphPlaceholder({ onSelectMaterial, onSelectPaper }: K
       const count = graphData.nodes.length
       const centerX = canvasWidth / 2
       const centerY = canvasHeight / 2
-      const radius = Math.min(centerX, centerY) * 0.65
+      const radius = Math.min(centerX, centerY) * 0.68
 
       const simNodes: SimNode[] = graphData.nodes.map((n, i) => {
         // 若子图谱中有材料主节点，将其置于中心
-        const isRootMat = mode === 'literature' && n.node_type === 'material'
+        const isRootMat = (mode === 'literature' || mode === 'fine_grained') && n.node_type === 'material'
         const angle = (i / Math.max(count, 1)) * 2 * Math.PI
         const typeCfg = TYPE_CONFIG[n.node_type] || TYPE_CONFIG.material
         const jitter = (Math.random() - 0.5) * 35
@@ -337,6 +350,7 @@ export function KnowledgeGraphPlaceholder({ onSelectMaterial, onSelectPaper }: K
     e.stopPropagation()
     draggedNodeRef.current = node
     setSelectedNode(node)
+    setFocusNode(node)
     isRunningRef.current = true
   }
 
@@ -345,9 +359,104 @@ export function KnowledgeGraphPlaceholder({ onSelectMaterial, onSelectPaper }: K
     isRunningRef.current = true
   }
 
+  const handleSelectLevel = (lvl: 1 | 2 | 3 | 'all') => {
+    setAssociationLevel(lvl)
+    isRunningRef.current = true
+  }
+
+  const handleClearFocus = () => {
+    setFocusNode(null)
+    setAssociationLevel('all')
+    isRunningRef.current = true
+  }
+
   const toggleTypeFilter = (t: string) => {
     setFilterTypes((prev) => ({ ...prev, [t]: !prev[t] }))
   }
+
+  // 双向邻接表索引，O(1) 快速检索相邻节点与边
+  const adjacencyIndex = useMemo(() => {
+    const adj = new Map<string, Set<string>>()
+    if (!data?.edges) return adj
+    for (const e of data.edges) {
+      if (!adj.has(e.source)) adj.set(e.source, new Set())
+      if (!adj.has(e.target)) adj.set(e.target, new Set())
+      adj.get(e.source)!.add(e.target)
+      adj.get(e.target)!.add(e.source)
+    }
+    return adj
+  }, [data])
+
+  // 计算当前聚焦节点各层级邻居数量（用于按钮预览指示）
+  const levelCounts = useMemo(() => {
+    if (!focusNode || !data) return { l1: 0, l2: 0, l3: 0 }
+    const l1Set = adjacencyIndex.get(focusNode.id) || new Set()
+    const l2Set = new Set<string>()
+    for (const nid of l1Set) {
+      const nbs = adjacencyIndex.get(nid)
+      if (nbs) {
+        for (const nb of nbs) {
+          if (nb !== focusNode.id && !l1Set.has(nb)) {
+            l2Set.add(nb)
+          }
+        }
+      }
+    }
+    const l3Set = new Set<string>()
+    for (const nid of l2Set) {
+      const nbs = adjacencyIndex.get(nid)
+      if (nbs) {
+        for (const nb of nbs) {
+          if (nb !== focusNode.id && !l1Set.has(nb) && !l2Set.has(nb)) {
+            l3Set.add(nb)
+          }
+        }
+      }
+    }
+    return {
+      l1: l1Set.size,
+      l2: l1Set.size + l2Set.size,
+      l3: l1Set.size + l2Set.size + l3Set.size,
+    }
+  }, [focusNode, data, adjacencyIndex])
+
+  // BFS 关联子图提取与性能保护
+  const MAX_SUBGRAPH_NODES = 80
+  const { associatedNodeIds, isTruncated, computedDurationMs } = useMemo(() => {
+    if (!focusNode || associationLevel === 'all' || !data) {
+      return { associatedNodeIds: null, isTruncated: false, computedDurationMs: 0 }
+    }
+
+    const t0 = performance.now()
+    const visited = new Set<string>([focusNode.id])
+    let currentLayer = new Set<string>([focusNode.id])
+    const maxDepth = associationLevel === 1 ? 1 : associationLevel === 2 ? 2 : 3
+
+    for (let depth = 1; depth <= maxDepth; depth++) {
+      const nextLayer = new Set<string>()
+      for (const nid of currentLayer) {
+        const nbs = adjacencyIndex.get(nid)
+        if (!nbs) continue
+        for (const nb of nbs) {
+          if (!visited.has(nb)) {
+            visited.add(nb)
+            nextLayer.add(nb)
+            if (visited.size >= MAX_SUBGRAPH_NODES) break
+          }
+        }
+        if (visited.size >= MAX_SUBGRAPH_NODES) break
+      }
+      currentLayer = nextLayer
+      if (currentLayer.size === 0 || visited.size >= MAX_SUBGRAPH_NODES) break
+    }
+
+    const duration = Number((performance.now() - t0).toFixed(2))
+    return {
+      associatedNodeIds: visited,
+      isTruncated: visited.size >= MAX_SUBGRAPH_NODES,
+      computedDurationMs: duration,
+    }
+  }, [focusNode, associationLevel, data, adjacencyIndex])
 
   // 子图谱年份选项
   const availableYears = useMemo(() => {
@@ -363,6 +472,11 @@ export function KnowledgeGraphPlaceholder({ onSelectMaterial, onSelectPaper }: K
 
   // 过滤后的可视化节点和边
   const visibleNodes = displayNodes.filter((n) => {
+    // 0. 关联子图层级过滤（仅保留与聚焦节点相关的节点）
+    if (associatedNodeIds && !associatedNodeIds.has(n.id)) {
+      return false
+    }
+
     // 1. 类型开关过滤
     if (!filterTypes[n.node_type]) return false
 
@@ -404,25 +518,31 @@ export function KnowledgeGraphPlaceholder({ onSelectMaterial, onSelectPaper }: K
               <span>
                 {graphMode === 'macro'
                   ? '宏观科学骨干知识网络 (Core Macro Graph)'
+                  : graphMode === 'fine_grained'
+                  ? '细粒度物性证据链拓扑 (Fine-Grained Evidence Graph)'
                   : `文献与作者证据子图谱 (Evidence Subgraph) · ${activeMaterial?.formula}`}
               </span>
             </div>
             <h2>
               {graphMode === 'macro'
                 ? '相变存储材料多维科学知识图谱'
+                : graphMode === 'fine_grained'
+                ? '相变材料 — 掺杂 — 实测物性 — 文献证据链拓扑'
                 : `材料 [${activeMaterial?.formula}] 的文献出处与作者星丛拓扑`}
             </h2>
             <p className="kg-subtitle">
               {graphMode === 'macro'
-                ? '聚焦材料实体、化学元素体系与标准物性指标的核心拓扑；文献作为专属证据层按需展开，杜绝节点平铺爆炸。'
-                : '以该材料为核心，同级展示关联学术文献、第一作者、通讯作者及收录期刊，实现科研证据的严谨溯源。'}
+                ? '展示材料、元素与物性指标核心拓扑，支持按需展开文献证据。'
+                : graphMode === 'fine_grained'
+                ? '贯通基体材料、掺杂样品、实测物性与出处论文的全证据链路，支持精准溯源。'
+                : '展示关联文献、作者与期刊，支持科研证据严谨溯源。'}
             </p>
           </div>
 
           {data && (
             <div className="kg-summary-badges">
               <span className="kg-tag material">材料: {data.summary.material_count}</span>
-              {graphMode === 'macro' ? (
+              {graphMode === 'macro' && (
                 <>
                   <span className="kg-tag element">元素: {data.summary.element_count}</span>
                   <span className="kg-tag property">物性: {data.summary.property_count}</span>
@@ -430,7 +550,20 @@ export function KnowledgeGraphPlaceholder({ onSelectMaterial, onSelectPaper }: K
                     <span className="kg-tag system">体系: {data.summary.system_count}</span>
                   ) : null}
                 </>
-              ) : (
+              )}
+              {graphMode === 'fine_grained' && (
+                <>
+                  <span className="kg-tag element" style={{ background: '#f3e8ff', color: '#7e22ce' }}>
+                    掺杂: {data.summary.dopant_count ?? 0}
+                  </span>
+                  <span className="kg-tag property" style={{ background: '#ecfdf5', color: '#047857' }}>
+                    观测: {data.summary.observation_count ?? 0}
+                  </span>
+                  <span className="kg-tag paper">文献: {data.summary.paper_count}</span>
+                  <span className="kg-tag author">作者: {data.summary.author_count}</span>
+                </>
+              )}
+              {graphMode === 'literature' && (
                 <>
                   <span className="kg-tag paper">文献: {data.summary.paper_count}</span>
                   <span className="kg-tag author">作者: {data.summary.author_count}</span>
@@ -444,11 +577,47 @@ export function KnowledgeGraphPlaceholder({ onSelectMaterial, onSelectPaper }: K
 
       {/* 控制与筛选工具条 */}
       <div className="kg-toolbar">
+        {/* 图谱主视角切换器 */}
+        <div className="toolbar-group">
+          <span className="tool-label">图谱模式：</span>
+          <button
+            className={`button small ${graphMode === 'macro' ? 'primary' : 'secondary'}`}
+            onClick={() => {
+              setGraphMode('macro')
+              setActiveMaterial(null)
+              resetView()
+            }}
+          >
+            🔬 宏观科学网络
+          </button>
+          <button
+            className={`button small ${graphMode === 'fine_grained' ? 'primary' : 'secondary'}`}
+            onClick={() => {
+              setGraphMode('fine_grained')
+              setActiveMaterial(null)
+              resetView()
+            }}
+          >
+            🔗 细粒度物性证据链
+          </button>
+          {activeMaterial && (
+            <button
+              className={`button small ${graphMode === 'literature' ? 'primary' : 'secondary'}`}
+              onClick={() => {
+                setGraphMode('literature')
+                resetView()
+              }}
+            >
+              📚 [{activeMaterial.formula}] 文献星丛
+            </button>
+          )}
+        </div>
+
         {graphMode === 'literature' ? (
           <>
             <div className="toolbar-group">
-              <button className="button small primary" onClick={handleReturnToMacro}>
-                ⬅️ 返回全局宏观图谱
+              <button className="button small secondary" onClick={handleReturnToMacro}>
+                ⬅️ 返回宏观
               </button>
             </div>
             <div className="toolbar-group">
@@ -459,7 +628,7 @@ export function KnowledgeGraphPlaceholder({ onSelectMaterial, onSelectPaper }: K
                 placeholder="搜索文献标题或作者..."
                 value={subgraphSearch}
                 onChange={(e) => setSubgraphSearch(e.target.value)}
-                style={{ width: 160, padding: '4px 8px', fontSize: 12 }}
+                style={{ width: 150, padding: '4px 8px', fontSize: 12 }}
               />
             </div>
             {availableYears.length > 0 && (
@@ -480,7 +649,7 @@ export function KnowledgeGraphPlaceholder({ onSelectMaterial, onSelectPaper }: K
               </div>
             )}
           </>
-        ) : (
+        ) : graphMode === 'macro' ? (
           <div className="toolbar-group">
             <span className="tool-label">🔍 元素子图：</span>
             {['', 'Ge', 'Sb', 'Te', 'Se', 'Bi', 'In'].map((el) => (
@@ -493,13 +662,15 @@ export function KnowledgeGraphPlaceholder({ onSelectMaterial, onSelectPaper }: K
               </button>
             ))}
           </div>
-        )}
+        ) : null}
 
         {/* 节点分类显示开关 */}
         <div className="toolbar-group">
-          <span className="tool-label">节点类型：</span>
+          <span className="tool-label">节点显示：</span>
           {(graphMode === 'macro'
             ? ['material', 'element', 'system', 'property']
+            : graphMode === 'fine_grained'
+            ? ['material', 'dopant', 'observation', 'paper', 'first_author']
             : ['material', 'paper', 'first_author', 'corresponding_author', 'journal']
           ).map((typeKey) => {
             const cfg = TYPE_CONFIG[typeKey]
@@ -550,6 +721,72 @@ export function KnowledgeGraphPlaceholder({ onSelectMaterial, onSelectPaper }: K
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
         >
+          {/* 关联子图聚焦与层级控制浮条 */}
+          {focusNode && (
+            <div className="association-toolbar-banner">
+              <div className="banner-left">
+                <span className="focus-dot" style={{ backgroundColor: focusNode.color }} />
+                <span className="focus-title">
+                  聚焦节点：<strong>{focusNode.label}</strong>
+                  <span className="focus-type-tag">
+                    {TYPE_CONFIG[focusNode.node_type]?.label || focusNode.node_type}
+                  </span>
+                </span>
+                {associationLevel !== 'all' ? (
+                  <span className="level-status-pill">
+                    已激活 {associationLevel} 级关联 (显示 {visibleNodes.length} 个节点)
+                    {computedDurationMs > 0 && <small> · {computedDurationMs}ms</small>}
+                  </span>
+                ) : (
+                  <span className="level-status-pill full">全图展示中 (点击切换关联层级)</span>
+                )}
+                {isTruncated && (
+                  <span className="truncate-pill" title="关联节点达到上限">
+                    ⚠️ 已限制前 80 节点
+                  </span>
+                )}
+              </div>
+              <div className="banner-actions">
+                <span className="action-hint">关联层级：</span>
+                <button
+                  className={`level-btn ${associationLevel === 1 ? 'active' : ''}`}
+                  onClick={() => handleSelectLevel(1)}
+                  title="仅显示直接相连的节点与边"
+                >
+                  一级关联 ({levelCounts.l1})
+                </button>
+                <button
+                  className={`level-btn ${associationLevel === 2 ? 'active' : ''}`}
+                  onClick={() => handleSelectLevel(2)}
+                  title="显示直接关联及其下一层节点"
+                >
+                  二级关联 ({levelCounts.l2})
+                </button>
+                <button
+                  className={`level-btn ${associationLevel === 3 ? 'active' : ''}`}
+                  onClick={() => handleSelectLevel(3)}
+                  title="扩展至三级关联（限制 80 节点防卡死）"
+                >
+                  三级关联 ({levelCounts.l3})
+                </button>
+                <button
+                  className={`level-btn ${associationLevel === 'all' ? 'active' : ''}`}
+                  onClick={() => handleSelectLevel('all')}
+                  title="显示全图所有节点"
+                >
+                  全部节点
+                </button>
+                <button
+                  className="level-btn reset-btn"
+                  onClick={handleClearFocus}
+                  title="退出聚焦并返回全图"
+                >
+                  ✕ 返回全图
+                </button>
+              </div>
+            </div>
+          )}
+
           {loading && (
             <div className="canvas-overlay loading">
               <div className="spinner-large" />
@@ -615,6 +852,10 @@ export function KnowledgeGraphPlaceholder({ onSelectMaterial, onSelectPaper }: K
                 let strokeColor = '#cbd5e1'
                 if (isEdgeActive) {
                   strokeColor = '#2563eb'
+                } else if (e.edge_type === 'DOPED_WITH') {
+                  strokeColor = '#8b5cf6'
+                } else if (e.edge_type === 'MEASURED_AS') {
+                  strokeColor = '#10b981'
                 } else if (e.edge_type === 'EVIDENCED_BY') {
                   strokeColor = '#a78bfa'
                 } else if (e.edge_type === 'FIRST_AUTHORED_BY') {
@@ -633,9 +874,11 @@ export function KnowledgeGraphPlaceholder({ onSelectMaterial, onSelectPaper }: K
                       x2={t.x}
                       y2={t.y}
                       stroke={strokeColor}
-                      strokeWidth={isEdgeActive ? 2.5 : 1.4}
+                      strokeWidth={isEdgeActive ? 2.5 : 1.5}
                       strokeDasharray={
-                        e.edge_type === 'EVIDENCED_BY' || e.edge_type === 'MENTIONS'
+                        e.edge_type === 'EVIDENCED_BY' ||
+                        e.edge_type === 'MENTIONS' ||
+                        e.edge_type === 'MEASURED_AS'
                           ? '4 3'
                           : undefined
                       }
@@ -733,6 +976,56 @@ export function KnowledgeGraphPlaceholder({ onSelectMaterial, onSelectPaper }: K
                 <h3>{selectedNode.label}</h3>
               </div>
 
+              {/* 节点关联子图层级控制 */}
+              <div className="side-association-box">
+                <div className="side-association-title-row">
+                  <span className="sec-label">🎯 关联子图层级显示：</span>
+                  {associationLevel !== 'all' && (
+                    <button className="text-cancel-btn" onClick={handleClearFocus}>
+                      恢复全图
+                    </button>
+                  )}
+                </div>
+                <div className="side-association-btn-grid">
+                  <button
+                    className={`side-lvl-btn ${associationLevel === 1 && focusNode?.id === selectedNode.id ? 'active' : ''}`}
+                    onClick={() => {
+                      setFocusNode(selectedNode)
+                      handleSelectLevel(1)
+                    }}
+                    title="仅显示与当前节点直接相连的一级邻居与边"
+                  >
+                    1级关联 ({levelCounts.l1})
+                  </button>
+                  <button
+                    className={`side-lvl-btn ${associationLevel === 2 && focusNode?.id === selectedNode.id ? 'active' : ''}`}
+                    onClick={() => {
+                      setFocusNode(selectedNode)
+                      handleSelectLevel(2)
+                    }}
+                    title="显示一级及次级相连节点"
+                  >
+                    2级关联 ({levelCounts.l2})
+                  </button>
+                  <button
+                    className={`side-lvl-btn ${associationLevel === 3 && focusNode?.id === selectedNode.id ? 'active' : ''}`}
+                    onClick={() => {
+                      setFocusNode(selectedNode)
+                      handleSelectLevel(3)
+                    }}
+                    title="扩展至三级关联"
+                  >
+                    3级关联 ({levelCounts.l3})
+                  </button>
+                  <button
+                    className={`side-lvl-btn ${associationLevel === 'all' ? 'active' : ''}`}
+                    onClick={() => handleSelectLevel('all')}
+                  >
+                    全图展示
+                  </button>
+                </div>
+              </div>
+
               <div className="detail-props">
                 {selectedNode.node_type === 'material' && (
                   <>
@@ -757,6 +1050,22 @@ export function KnowledgeGraphPlaceholder({ onSelectMaterial, onSelectPaper }: K
                           }
                         >
                           🔬 展开文献与作者证据子图谱
+                        </button>
+                      )}
+                      {Boolean(selectedNode.properties?.material_id) && graphMode !== 'fine_grained' && (
+                        <button
+                          className="button small"
+                          style={{ background: '#7c3aed', color: '#fff', border: 'none' }}
+                          onClick={() => {
+                            setActiveMaterial({
+                              id: String(selectedNode.properties?.material_id),
+                              formula: selectedNode.label,
+                            })
+                            setGraphMode('fine_grained')
+                            resetView()
+                          }}
+                        >
+                          🔗 展开该材料细粒度物性证据链
                         </button>
                       )}
                       {Boolean(selectedNode.properties?.material_id && onSelectMaterial) && (
@@ -893,6 +1202,73 @@ export function KnowledgeGraphPlaceholder({ onSelectMaterial, onSelectPaper }: K
                       <div className="prop-row">
                         <span className="label">测定观测：</span>
                         <span className="val highlight">{String(selectedNode.properties.sample_value)}</span>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {selectedNode.node_type === 'dopant' && (
+                  <>
+                    <div className="prop-row">
+                      <span className="label">掺杂元素：</span>
+                      <span className="val font-semibold">{String(selectedNode.properties?.dopant_element || selectedNode.label)}</span>
+                    </div>
+                    {selectedNode.properties?.dopant_concentration !== undefined && (
+                      <div className="prop-row">
+                        <span className="label">掺杂浓度：</span>
+                        <span className="val font-mono">{String(selectedNode.properties.dopant_concentration)} at.%</span>
+                      </div>
+                    )}
+                    <div className="prop-row">
+                      <span className="label">科学机制：</span>
+                      <span className="val">通过空位填充或八面体/四面体局域畸变，有效调控结晶激活能与非晶态热稳定性</span>
+                    </div>
+                  </>
+                )}
+
+                {selectedNode.node_type === 'observation' && (
+                  <>
+                    <div className="prop-row">
+                      <span className="label">物性代码：</span>
+                      <span className="val font-mono">{String(selectedNode.properties?.property_code || selectedNode.label)}</span>
+                    </div>
+                    <div className="prop-row">
+                      <span className="label">实测观测值：</span>
+                      <span className="val highlight font-semibold" style={{ fontSize: 16 }}>
+                        {String(selectedNode.properties?.value ?? '—')} {String(selectedNode.properties?.unit ?? '')}
+                      </span>
+                    </div>
+                    {selectedNode.properties?.heating_rate_value && (
+                      <div className="prop-row" style={{ background: '#fffbeb', padding: '6px 8px', borderRadius: 4, border: '1px solid #fef3c7' }}>
+                        <span className="label" style={{ color: '#b45309' }}>🔥 升温速率：</span>
+                        <span className="val" style={{ color: '#b45309', fontWeight: 700 }}>
+                          {String(selectedNode.properties.heating_rate_value)} {String(selectedNode.properties.heating_rate_unit || 'K/min')}
+                        </span>
+                      </div>
+                    )}
+                    <div className="prop-row">
+                      <span className="label">审核状态：</span>
+                      <span className="val" style={{ color: '#059669', fontWeight: 600 }}>
+                        ✓ {String(selectedNode.properties?.verification_status || 'HUMAN_REVIEWED')}
+                      </span>
+                    </div>
+                    {selectedNode.properties?.paper_title && (
+                      <div className="prop-row">
+                        <span className="label">出处文献：</span>
+                        <span className="val text-small">{String(selectedNode.properties.paper_title)}</span>
+                      </div>
+                    )}
+                    {selectedNode.properties?.doi && (
+                      <div className="prop-row">
+                        <span className="label">DOI：</span>
+                        <a
+                          href={`https://doi.org/${selectedNode.properties.doi}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="val link"
+                        >
+                          {String(selectedNode.properties.doi)} ↗
+                        </a>
                       </div>
                     )}
                   </>

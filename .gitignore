@@ -63,6 +63,8 @@ scripts/clean_mojibake_and_aliases.py
 scripts/download_pcm_literature.py
 scripts/fix_measurement_terms_mojibake.py
 scripts/normalize_materials_and_variants.py
+scripts/extract_phase_change_properties.py
+scripts/test_batch_papers_ingest.py
 
 # 本地备份与归档目录
 backups/

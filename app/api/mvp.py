@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from uuid6 import uuid7
 
 from app.application.literature_parser import (
+    extract_archive_manifest,
     extract_archive_papers,
     is_archive_filename,
     parse_uploaded_paper,
@@ -26,7 +27,12 @@ from app.models.common import CursorPage
 from app.models.config import AppConfigRead, AppConfigUpdate
 from app.models.literature import PaperCreate, PaperRead
 from app.models.material import MaterialCreate, MaterialRead
-from app.models.mvp import DashboardRead, ObservationListItem, PropertyOption
+from app.models.mvp import (
+    DashboardRead,
+    ObservationListItem,
+    PropertyComparisonResponse,
+    PropertyOption,
+)
 from app.models.observation import ObservationCreate, ObservationRead
 from app.models.search import SearchRequest, SearchResponse
 
@@ -134,9 +140,10 @@ async def batch_upload_papers(
             content = await file.read()
             if is_archive_filename(fname):
                 try:
+                    manifest_dict = extract_archive_manifest(fname, content)
                     extracted_files = extract_archive_papers(fname, content)
                     for sub_fname, sub_content in extracted_files:
-                        preview = parse_uploaded_paper(sub_fname, sub_content)
+                        preview = parse_uploaded_paper(sub_fname, sub_content, manifest_dict=manifest_dict)
                         items.append(preview)
                         if preview.status == "parsed":
                             parsed_cnt += 1
@@ -254,4 +261,26 @@ async def get_knowledge_graph(
         subgraph=subgraph,
         limit=limit,
     )
+
+
+@router.get(
+    "/analytics/property-comparison",
+    response_model=PropertyComparisonResponse,
+    tags=["analytics"],
+    summary="多维相变材料物性跨文献横向对比与统计分布",
+)
+async def get_property_comparison(
+    repository: Repository,
+    property_code: str = Query(default="crystallization_temperature", description="属性代码"),
+    base_material: str | None = Query(default=None, description="基础材料筛选（如 GeTe, Sb2Te3）"),
+    heating_rate: float | None = Query(default=None, description="升温速率筛选 (K/min)"),
+    display_unit: str = Query(default="celsius", description="温度显示单位 (celsius / kelvin)"),
+) -> PropertyComparisonResponse:
+    return await repository.get_property_comparison(
+        property_code=property_code,
+        base_material=base_material,
+        heating_rate=heating_rate,
+        display_unit=display_unit,
+    )
+
 

@@ -32,7 +32,64 @@ def is_archive_filename(filename: str) -> bool:
     return fn.endswith(".zip") or fn.endswith(".tar.gz") or fn.endswith(".tgz") or fn.endswith(".tar")
 
 
-def extract_archive_papers(filename: str, content: bytes) -> list[tuple[str, bytes]]:
+def extract_archive_manifest(filename: str, content: bytes) -> dict[str, Any] | None:
+    """从压缩包 (.zip 或 .tar.gz) 中提取 catalog_manifest.json 或 manifest.json。"""
+    fn = filename.lower()
+    if fn.endswith(".zip"):
+        try:
+            with zipfile.ZipFile(io.BytesIO(content)) as zf:
+                for info in zf.infolist():
+                    base = Path(info.filename).name.lower()
+                    if base in ("catalog_manifest.json", "manifest.json"):
+                        raw = zf.read(info)
+                        return json.loads(raw.decode("utf-8", errors="ignore"))
+        except Exception:
+            return None
+    elif fn.endswith(".tar.gz") or fn.endswith(".tgz") or fn.endswith(".tar"):
+        mode = "r:gz" if (fn.endswith(".tar.gz") or fn.endswith(".tgz")) else "r:"
+        try:
+            with tarfile.open(fileobj=io.BytesIO(content), mode=mode) as tf:
+                for member in tf.getmembers():
+                    base = Path(member.name).name.lower()
+                    if base in ("catalog_manifest.json", "manifest.json"):
+                        f = tf.extractfile(member)
+                        if f:
+                            return json.loads(f.read().decode("utf-8", errors="ignore"))
+        except Exception:
+            return None
+    return None
+
+
+def lookup_manifest_entry(filename: str, manifest_dict: dict[str, Any] | None) -> dict[str, Any] | None:
+    """在元数据清单中检索匹配该文献文件的元数据项。"""
+    if not manifest_dict:
+        return None
+    stem = Path(filename).stem
+    # 候选 1: 直接键或下划线转斜杠
+    cand1 = stem.replace("_", "/")
+    if cand1 in manifest_dict:
+        return manifest_dict[cand1]
+    if stem in manifest_dict:
+        return manifest_dict[stem]
+    # 候选 2: 提取 DOI 格式
+    m_doi = DOI_REGEX.search(cand1)
+    if m_doi and m_doi.group(0) in manifest_dict:
+        return manifest_dict[m_doi.group(0)]
+    # 候选 3: 归一化字符匹配（应对含特殊字符的 DOI）
+    stem_norm = re.sub(r"[^a-zA-Z0-9]", "", stem.lower())
+    for k, v in manifest_dict.items():
+        k_norm = re.sub(r"[^a-zA-Z0-9]", "", k.lower())
+        if k_norm and (k_norm in stem_norm or stem_norm in k_norm):
+            return v
+    return None
+
+
+def extract_archive_papers(
+    filename: str,
+    content: bytes,
+    max_file_count: int = MAX_ARCHIVE_FILE_COUNT,
+    max_total_size: int = MAX_TOTAL_UNCOMPRESSED_SIZE,
+) -> list[tuple[str, bytes]]:
     """安全解压 .zip 或 .tar.gz 压缩包，提取其中的有效 PDF 文件。
 
     安全机制：
@@ -61,12 +118,12 @@ def extract_archive_papers(filename: str, content: bytes) -> list[tuple[str, byt
                         continue
                     if not base_name.lower().endswith(".pdf"):
                         continue
-                    if len(extracted) >= MAX_ARCHIVE_FILE_COUNT:
-                        raise ValueError(f"压缩包内有效文献数量超过最大限制 ({MAX_ARCHIVE_FILE_COUNT} 篇)")
+                    if len(extracted) >= max_file_count:
+                        raise ValueError(f"压缩包内有效文献数量超过最大限制 ({max_file_count} 篇)")
                     if info.file_size > MAX_SINGLE_FILE_SIZE:
                         raise ValueError(f"文件 {base_name} 解压后超过单个文件限制 (50MB)")
                     total_size += info.file_size
-                    if total_size > MAX_TOTAL_UNCOMPRESSED_SIZE:
+                    if total_size > max_total_size:
                         raise ValueError("压缩包解压总数据量超过安全限制 (200MB)")
                     file_bytes = zf.read(info)
                     extracted.append((base_name, file_bytes))
@@ -88,12 +145,12 @@ def extract_archive_papers(filename: str, content: bytes) -> list[tuple[str, byt
                         continue
                     if not base_name.lower().endswith(".pdf"):
                         continue
-                    if len(extracted) >= MAX_ARCHIVE_FILE_COUNT:
-                        raise ValueError(f"压缩包内有效文献数量超过最大限制 ({MAX_ARCHIVE_FILE_COUNT} 篇)")
+                    if len(extracted) >= max_file_count:
+                        raise ValueError(f"压缩包内有效文献数量超过最大限制 ({max_file_count} 篇)")
                     if member.size > MAX_SINGLE_FILE_SIZE:
                         raise ValueError(f"文件 {base_name} 解压后超过单个文件限制 (50MB)")
                     total_size += member.size
-                    if total_size > MAX_TOTAL_UNCOMPRESSED_SIZE:
+                    if total_size > max_total_size:
                         raise ValueError("压缩包解压总数据量超过安全限制 (200MB)")
                     f = tf.extractfile(member)
                     if f is None:
@@ -108,6 +165,68 @@ def extract_archive_papers(filename: str, content: bytes) -> list[tuple[str, byt
         raise ValueError(f"压缩包 {filename} 中未发现有效的 .pdf 文献文件")
 
     return extracted
+
+
+def iter_archive_papers(
+    archive_source: str | Path | bytes,
+    is_filename: str = "",
+):
+    """流式生成器：逐个读取压缩包内的 PDF 文献，严格控制内存占用，附带识别包内清单。
+
+    Yields:
+        (base_filename: str, file_bytes: bytes, manifest_dict: dict | None)
+    """
+    manifest_dict: dict[str, Any] | None = None
+    if isinstance(archive_source, (str, Path)):
+        p = Path(archive_source)
+        if not p.exists():
+            raise FileNotFoundError(f"归档文件不存在: {archive_source}")
+        # 读取 zip
+        if p.suffix.lower() == ".zip":
+            with zipfile.ZipFile(p, "r") as zf:
+                # 先扫描 manifest
+                for info in zf.infolist():
+                    bname = Path(info.filename).name.lower()
+                    if bname in ("catalog_manifest.json", "manifest.json"):
+                        try:
+                            manifest_dict = json.loads(zf.read(info).decode("utf-8", errors="ignore"))
+                        except Exception:
+                            pass
+                        break
+                # 再流式遍历 PDF
+                for info in zf.infolist():
+                    if info.is_dir():
+                        continue
+                    norm_p = Path(info.filename)
+                    if ".." in norm_p.parts or "__MACOSX" in norm_p.parts or norm_p.name.startswith("."):
+                        continue
+                    if not norm_p.name.lower().endswith(".pdf"):
+                        continue
+                    file_bytes = zf.read(info)
+                    yield (norm_p.name, file_bytes, manifest_dict)
+    else:
+        # bytes source
+        fn = is_filename.lower()
+        if fn.endswith(".zip") or is_filename == "":
+            with zipfile.ZipFile(io.BytesIO(archive_source), "r") as zf:
+                for info in zf.infolist():
+                    bname = Path(info.filename).name.lower()
+                    if bname in ("catalog_manifest.json", "manifest.json"):
+                        try:
+                            manifest_dict = json.loads(zf.read(info).decode("utf-8", errors="ignore"))
+                        except Exception:
+                            pass
+                        break
+                for info in zf.infolist():
+                    if info.is_dir():
+                        continue
+                    norm_p = Path(info.filename)
+                    if ".." in norm_p.parts or "__MACOSX" in norm_p.parts or norm_p.name.startswith("."):
+                        continue
+                    if not norm_p.name.lower().endswith(".pdf"):
+                        continue
+                    file_bytes = zf.read(info)
+                    yield (norm_p.name, file_bytes, manifest_dict)
 
 
 def _clean_text(s: str | None) -> str | None:
@@ -194,6 +313,15 @@ def _extract_from_pdf_bytes(data: bytes, filename: str) -> dict[str, Any]:
                 pass
 
     # 3. 搜索 DOI 模式
+    if not res.get("doi"):
+        # 先检查文件名中是否显式编码了合法的 DOI (例如 10.1002_adfm.201302673.pdf -> 10.1002/adfm.201302673)
+        fn_stem = Path(filename).stem
+        for cand in [fn_stem, fn_stem.replace("_", "/"), fn_stem.replace("-", "/")]:
+            m_fn_doi = DOI_REGEX.search(cand)
+            if m_fn_doi and not m_fn_doi.group(0).startswith("10.1000/"):
+                res["doi"] = m_fn_doi.group(0)
+                break
+
     if not res.get("doi"):
         # 扫描前 200KB 内容的文本匹配
         sample_text = data[:200000].decode("latin-1", errors="ignore")
@@ -375,8 +503,12 @@ def _extract_from_bibtex_bytes(data: bytes, filename: str) -> dict[str, Any]:
     }
 
 
-def parse_uploaded_paper(filename: str, content: bytes) -> ParsedPaperPreview:
-    """对单个上传的文献文件进行智能启发式解析并返回预览模型。"""
+def parse_uploaded_paper(
+    filename: str,
+    content: bytes,
+    manifest_dict: dict[str, Any] | None = None,
+) -> ParsedPaperPreview:
+    """对单个上传的文献文件进行智能启发式解析并返回预览模型。若提供 manifest_dict 则优先应用清单权威元数据。"""
     file_id = str(uuid7())
     file_size = len(content)
 
@@ -389,6 +521,9 @@ def parse_uploaded_paper(filename: str, content: bytes) -> ParsedPaperPreview:
             status="failed",
             error_message="上传的文件内容为空 (0 字节)",
         )
+
+    # 优先在元数据清单中检索
+    manifest_entry = lookup_manifest_entry(filename, manifest_dict)
 
     fn_lower = filename.lower()
     res: dict[str, Any]
@@ -421,6 +556,33 @@ def parse_uploaded_paper(filename: str, content: bytes) -> ParsedPaperPreview:
             status="failed",
             error_message=f"解析过程发生异常: {str(e)}",
         )
+
+    # 若清单中存在权威元数据，用清单覆盖与补充
+    if manifest_entry:
+        m_title = _clean_text(manifest_entry.get("title"))
+        if m_title:
+            res["title"] = m_title
+        m_doi = _clean_text(manifest_entry.get("doi")) or _clean_text(manifest_entry.get("full_doi"))
+        if m_doi:
+            res["doi"] = m_doi
+        m_year = manifest_entry.get("year") or manifest_entry.get("publication_year")
+        if m_year:
+            try:
+                res["publication_year"] = int(m_year)
+            except Exception:
+                pass
+        m_authors = manifest_entry.get("authors")
+        if isinstance(m_authors, list) and m_authors:
+            cleaned_authors = [_clean_text(a) for a in m_authors if _clean_text(a)]
+            if cleaned_authors:
+                res["first_author"] = cleaned_authors[0]
+                res["corresponding_author"] = cleaned_authors[-1] if len(cleaned_authors) > 1 else cleaned_authors[0]
+        m_journal = _clean_text(manifest_entry.get("journal")) or _clean_text(manifest_entry.get("source"))
+        if m_journal and m_journal.lower() not in ("failed", "unknown", "null"):
+            res["journal"] = m_journal
+        m_abstract = _clean_text(manifest_entry.get("abstract"))
+        if m_abstract:
+            res["abstract"] = m_abstract
 
     err = res.get("error")
     status = "failed" if err else "parsed"

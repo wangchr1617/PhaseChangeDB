@@ -7,6 +7,7 @@ import { KnowledgeGraphPlaceholder } from './components/KnowledgeGraphPlaceholde
 import { LiteratureAgentView } from './components/LiteratureAgentView'
 import { LiteratureStatsView } from './components/LiteratureStatsView'
 import { PeriodicTable } from './components/PeriodicTable'
+import { PropertyComparisonBoard } from './components/PropertyComparisonBoard'
 import type { MaterialVariantRead, ObservationConflictGroup } from './types/batch'
 import { Workflow } from './Workflow'
 
@@ -131,7 +132,7 @@ function App() {
   const [hits, setHits] = useState<SearchHit[]>([])
   const [status, setStatus] = useState('正在连接本地 API…')
   const [activeView, setActiveView] = useState<
-    'overview' | 'materials' | 'papers' | 'workflow' | 'agent' | 'knowledge-graph'
+    'overview' | 'materials' | 'papers' | 'workflow' | 'agent' | 'knowledge-graph' | 'property-compare'
   >('overview')
 
   const [showMaterialForm, setShowMaterialForm] = useState(false)
@@ -509,12 +510,9 @@ function App() {
           <button className={activeView === 'materials' ? 'active' : ''} onClick={() => setActiveView('materials')}>材料库 <span>{dashboard?.materials ?? '—'}</span></button>
           <button className={activeView === 'papers' ? 'active' : ''} onClick={() => setActiveView('papers')}>文献 <span>{dashboard?.papers ?? '—'}</span></button>
           <button className={activeView === 'workflow' ? 'active' : ''} onClick={() => setActiveView('workflow')}>录入与审核工作流</button>
-          <button className={activeView === 'agent' ? 'active' : ''} onClick={() => setActiveView('agent')}>
-            文献解析智能体 <span className="nav-badge-ai">AI</span>
-          </button>
-          <button className={activeView === 'knowledge-graph' ? 'active' : ''} onClick={() => setActiveView('knowledge-graph')}>
-            知识图谱 <span className="nav-badge-plan">建设中</span>
-          </button>
+          <button className={activeView === 'agent' ? 'active' : ''} onClick={() => setActiveView('agent')}>文献解析智能体</button>
+          <button className={activeView === 'property-compare' ? 'active' : ''} onClick={() => setActiveView('property-compare')}>物性横向对比</button>
+          <button className={activeView === 'knowledge-graph' ? 'active' : ''} onClick={() => setActiveView('knowledge-graph')}>知识图谱</button>
         </nav>
         <div className="system-state"><i />{status}</div>
       </aside>
@@ -534,6 +532,8 @@ function App() {
                 ? '文献智能解析智能体'
                 : activeView === 'knowledge-graph'
                 ? '科学知识图谱'
+                : activeView === 'property-compare'
+                ? '相变物性横向对比与证据对齐看板'
                 : '科学数据录入与审核工作流'}
             </h1>
           </div>
@@ -542,7 +542,7 @@ function App() {
           )}
         </header>
 
-        {activeView !== 'workflow' && activeView !== 'agent' && activeView !== 'knowledge-graph' && (
+        {activeView !== 'workflow' && activeView !== 'agent' && activeView !== 'knowledge-graph' && activeView !== 'property-compare' && (
           <form className="search" onSubmit={search}>
             <span>⌕</span>
             <input
@@ -555,7 +555,7 @@ function App() {
         )}
 
         {/* 搜索结果区域 */}
-        {hits.length > 0 && activeView !== 'workflow' && activeView !== 'agent' && activeView !== 'knowledge-graph' && (
+        {hits.length > 0 && activeView !== 'workflow' && activeView !== 'agent' && activeView !== 'knowledge-graph' && activeView !== 'property-compare' && (
 
           <section className="search-results">
             <div className="section-title">
@@ -596,7 +596,7 @@ function App() {
         )}
 
         {/* 搜索无结果友好空状态 */}
-        {hasSearched && hits.length === 0 && activeView !== 'workflow' && (
+        {hasSearched && hits.length === 0 && activeView !== 'workflow' && activeView !== 'agent' && activeView !== 'knowledge-graph' && activeView !== 'property-compare' && (
           <section className="search-results empty-results">
             <div className="search-empty-state">
               <div className="empty-icon">🔍</div>
@@ -1042,7 +1042,17 @@ function App() {
         )}
 
         {activeView === 'knowledge-graph' && (
-          <KnowledgeGraphPlaceholder onSelectMaterial={(mid) => void openMaterialModal(mid)} />
+          <KnowledgeGraphPlaceholder
+            onSelectMaterial={(mid) => void openMaterialModal(mid)}
+            onSelectPaper={(pid) => void openPaperModal(pid)}
+          />
+        )}
+
+        {activeView === 'property-compare' && (
+          <PropertyComparisonBoard
+            onSelectMaterial={(mid) => void openMaterialModal(mid)}
+            onSelectPaper={(pid) => void openPaperModal(pid)}
+          />
         )}
       </main>
 

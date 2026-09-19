@@ -154,6 +154,8 @@ class GraphSummary(APIModel):
     system_count: int = 0
     author_count: int = 0
     journal_count: int = 0
+    dopant_count: int = 0
+    observation_count: int = 0
 
 
 class KnowledgeGraphResponse(APIModel):

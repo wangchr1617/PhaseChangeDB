@@ -36,7 +36,14 @@ from app.models.batch_upload import (
 from app.models.config import AppConfigRead, AppConfigUpdate
 from app.models.literature import PaperCreate, PaperRead
 from app.models.material import MaterialCreate, MaterialRead, MaterialVariantRead, VariantObservationRead
-from app.models.mvp import DashboardRead, ObservationListItem, PropertyOption
+from app.models.mvp import (
+    DashboardRead,
+    ObservationListItem,
+    PropertyBoxPlotStat,
+    PropertyComparisonDataPoint,
+    PropertyComparisonResponse,
+    PropertyOption,
+)
 from app.models.observation import ObservationCreate, ObservationRead
 from app.models.search import SearchHit
 
@@ -397,7 +404,8 @@ class MySQLCatalogRepository:
             desc = sr["sample_desc"] or ""
             dopant_elem = None
             dopant_conc = None
-            dop_m = re.search(r"([A-Z][a-z]?)[-_ ]?(?:dop(?:ed|ant)?|掺杂)[^0-9]*([0-9]+\.?[0-9]*)", desc, re.IGNORECASE)
+            dop_pattern = r"([A-Z][a-z]?)[-_ ]?(?:dop(?:ed|ant)?|掺杂)[^0-9]*([0-9]+\.?[0-9]*)"
+            dop_m = re.search(dop_pattern, desc, re.IGNORECASE)
             if dop_m:
                 dopant_elem = dop_m.group(1)
                 dopant_conc = float(dop_m.group(2))
@@ -407,7 +415,8 @@ class MySQLCatalogRepository:
 
             prep_method = sr["process_name"] or sr["substrate_material"]
             if sr["thickness_value"]:
-                prep_method = f"{prep_method or '薄膜'} (厚度: {sr['thickness_value']} {sr['thickness_unit'] or 'nm'})".strip()
+                thick_str = f"{sr['thickness_value']} {sr['thickness_unit'] or 'nm'}"
+                prep_method = f"{prep_method or '薄膜'} (厚度: {thick_str})".strip()
 
             anneal_temp = None
             if sr["proc_temp"] is not None:
@@ -646,9 +655,9 @@ class MySQLCatalogRepository:
         skipped = 0
         failed = 0
         result_papers: list[PaperRead] = []
+        author_cache: dict[str, bytes] = {}
 
         for item in item_list:
-
             try:
                 title = item.title.strip()
                 doi = item.doi.strip() if item.doi else None
@@ -674,15 +683,26 @@ class MySQLCatalogRepository:
                     skipped += 1
                     continue
 
-
                 # 插入新文献
                 paper_id = uuid7()
-                meta = item.metadata or {}
+                meta = dict(item.metadata or {})
                 first_author = item.first_author.strip() if item.first_author else None
                 corresponding_author = item.corresponding_author.strip() if item.corresponding_author else None
                 authors = [first_author] if first_author else []
                 if corresponding_author and corresponding_author not in authors:
                     authors.append(corresponding_author)
+
+                # 启发式识别主要相变材料关联系谱（如 GeTe, Sb2Te3, Ge2Sb2Te5）
+                corpus = f"{title} {item.abstract or ''}".lower()
+                related_mats = []
+                if "gete" in corpus:
+                    related_mats.append("GeTe")
+                if "sb2te3" in corpus or "sb-te" in corpus:
+                    related_mats.append("Sb2Te3")
+                if "ge2sb2te5" in corpus or "gst" in corpus or "ge-sb-te" in corpus:
+                    related_mats.append("Ge2Sb2Te5")
+                if related_mats:
+                    meta["related_materials"] = list(set(related_mats))
 
                 meta["authors"] = authors
                 meta["first_author"] = first_author
@@ -709,22 +729,26 @@ class MySQLCatalogRepository:
                     },
                 )
 
-                # 插入作者关联
+                # 插入作者关联（结合会话级在内存缓存，消除 N+1 重复查询）
                 for order, author_name in enumerate(authors, start=1):
-                    author_row = (
-                        await self.session.execute(
-                            text("SELECT id FROM lit_author WHERE name = :name"),
-                            {"name": author_name},
-                        )
-                    ).mappings().first()
-                    if author_row:
-                        author_id = author_row["id"]
+                    if author_name in author_cache:
+                        author_id = author_cache[author_name]
                     else:
-                        author_id = uuid7().bytes
-                        await self.session.execute(
-                            text("INSERT INTO lit_author (id, name) VALUES (:id, :name)"),
-                            {"id": author_id, "name": author_name},
-                        )
+                        author_row = (
+                            await self.session.execute(
+                                text("SELECT id FROM lit_author WHERE name = :name"),
+                                {"name": author_name},
+                            )
+                        ).mappings().first()
+                        if author_row:
+                            author_id = author_row["id"]
+                        else:
+                            author_id = uuid7().bytes
+                            await self.session.execute(
+                                text("INSERT INTO lit_author (id, name) VALUES (:id, :name)"),
+                                {"id": author_id, "name": author_name},
+                            )
+                        author_cache[author_name] = author_id
 
                     is_corr = author_name == corresponding_author
                     await self.session.execute(
@@ -752,8 +776,6 @@ class MySQLCatalogRepository:
             except Exception:
                 await self.session.rollback()
                 failed += 1
-
-
 
         return BatchIngestResponse(
             total=len(item_list),
@@ -1434,131 +1456,362 @@ class MySQLCatalogRepository:
                     )
                 )
 
-        # 模式 A: 文献证据子图谱 (subgraph == "literature" 或 (material_id and subgraph != "macro"))
-        if subgraph == "literature" or (material_id and subgraph != "macro"):
-            papers = await self.list_papers(query=None, limit=100)
-            for m in materials:
-                m_node_id = f"mat_{m.id}"
-                formula_clean = m.canonical_formula.lower()
+        # 模式 C: 细粒度材料 - 掺杂元素 - 物性测定 - 出处文献证据子图谱
+        if subgraph in ("fine_grained", "evidence_chain"):
+            obs_sql = """
+                SELECT
+                    o.id AS obs_id,
+                    pdef.code AS property_code,
+                    pdef.name AS property_name,
+                    pdef.symbol AS property_symbol,
+                    m.id AS material_id,
+                    m.canonical_formula AS base_material,
+                    s.sample_label,
+                    s.thickness_value,
+                    s.substrate_material,
+                    meas.instrument,
+                    meas.heating_rate_value,
+                    meas.heating_rate_unit,
+                    o.value_numeric,
+                    o.original_value_text,
+                    o.original_unit_text,
+                    o.normalized_value,
+                    o.verification_status,
+                    p.id AS paper_id,
+                    p.title AS paper_title,
+                    p.doi AS paper_doi,
+                    p.publication_year,
+                    p.metadata_json AS paper_metadata,
+                    ef.figure_number,
+                    ef.text_snippet
+                FROM obs_observation o
+                JOIN obs_property_definition pdef ON o.property_definition_id = pdef.id
+                JOIN sam_sample s ON o.sample_id = s.id
+                JOIN mat_material m ON s.nominal_material_id = m.id
+                LEFT JOIN exp_measurement meas ON o.measurement_id = meas.id
+                LEFT JOIN lit_paper p ON s.source_paper_id = p.id
+                LEFT JOIN evd_observation_link eol ON o.id = eol.observation_id
+                LEFT JOIN evd_fragment ef ON (eol.evidence_fragment_id = ef.id OR meas.evidence_id = ef.id)
+                WHERE o.verification_status != 'RETRACTED'
+            """
+            params: dict[str, Any] = {"limit": limit}
+            if material_id:
+                try:
+                    params["mid"] = UUID(material_id).bytes
+                    obs_sql += " AND m.id = :mid "
+                except ValueError:
+                    pass
+            obs_sql += " ORDER BY o.created_at DESC LIMIT :limit"
 
-                # 查找与该材料相关的文献
-                for p in papers:
-                    p_corpus = f"{p.title} {p.abstract or ''}".lower()
-                    if formula_clean in p_corpus or (m.chemical_system and m.chemical_system.lower() in p_corpus):
-                        p_node_id = f"paper_{p.id}"
-                        if p_node_id not in node_ids:
-                            node_ids.add(p_node_id)
+            obs_rows = (await self.session.execute(text(obs_sql), params)).mappings().all()
+
+            for r in obs_rows:
+                m_guid = _uuid(r["material_id"])
+                m_node_id = f"mat_{m_guid}"
+                if m_node_id not in node_ids:
+                    node_ids.add(m_node_id)
+                    nodes.append(
+                        GraphNode(
+                            id=m_node_id,
+                            label=r["base_material"],
+                            node_type="material",
+                            properties={"material_id": str(m_guid), "formula": r["base_material"]},
+                        )
+                    )
+
+                sample_lbl = r["sample_label"] or r["base_material"]
+                dop_elem = None
+                for cand_elem in ("Bi", "In", "Sb", "Ag", "N", "C", "Ti", "Sc", "Cr", "Cu", "Al", "Si"):
+                    if r["base_material"] == "GeTe" and cand_elem in ("Ge", "Te"):
+                        continue
+                    if r["base_material"] == "Sb2Te3" and cand_elem in ("Sb", "Te"):
+                        continue
+                    if re.search(rf"\b{cand_elem}\b|{cand_elem}\d+", sample_lbl):
+                        dop_elem = cand_elem
+                        break
+
+                parent_source_id = m_node_id
+                if dop_elem:
+                    dop_node_id = f"dopant_{dop_elem}"
+                    if dop_node_id not in node_ids:
+                        node_ids.add(dop_node_id)
+                        nodes.append(
+                            GraphNode(
+                                id=dop_node_id,
+                                label=f"掺杂: {dop_elem}",
+                                node_type="dopant",
+                                properties={"element": dop_elem},
+                            )
+                        )
+                    edge_key = (m_node_id, dop_node_id, "DOPED_WITH")
+                    if edge_key not in edge_keys:
+                        edge_keys.add(edge_key)
+                        edges.append(
+                            GraphEdge(
+                                id=f"e_{len(edges)}",
+                                source=m_node_id,
+                                target=dop_node_id,
+                                edge_type="DOPED_WITH",
+                                label="改性掺杂",
+                            )
+                        )
+                    parent_source_id = dop_node_id
+
+                obs_guid = _uuid(r["obs_id"])
+                obs_node_id = f"obs_{obs_guid}"
+                val_txt = f"{r['original_value_text']}{r['original_unit_text'] or ''}"
+                hr_txt = f" ({r['heating_rate_value']}K/min)" if r["heating_rate_value"] else ""
+                obs_label = f"{r['property_symbol'] or r['property_code'][:2]}: {val_txt}{hr_txt}"
+
+                if obs_node_id not in node_ids:
+                    node_ids.add(obs_node_id)
+                    nodes.append(
+                        GraphNode(
+                            id=obs_node_id,
+                            label=obs_label,
+                            node_type="observation",
+                            properties={
+                                "observation_id": str(obs_guid),
+                                "property_code": r["property_code"],
+                                "property_name": r["property_name"],
+                                "value": str(r["value_numeric"]),
+                                "unit": r["original_unit_text"],
+                                "heating_rate": str(r["heating_rate_value"]) if r["heating_rate_value"] else None,
+                                "status": r["verification_status"],
+                                "sample_label": sample_lbl,
+                                "snippet": r["text_snippet"],
+                                "figure": r["figure_number"],
+                            },
+                        )
+                    )
+
+                edge_key = (parent_source_id, obs_node_id, "EXHIBITS_PROPERTY")
+                if edge_key not in edge_keys:
+                    edge_keys.add(edge_key)
+                    edges.append(
+                        GraphEdge(
+                            id=f"e_{len(edges)}",
+                            source=parent_source_id,
+                            target=obs_node_id,
+                            edge_type="EXHIBITS_PROPERTY",
+                            label="测得物性",
+                        )
+                    )
+
+                if r["paper_id"]:
+                    p_guid = _uuid(r["paper_id"])
+                    p_node_id = f"paper_{p_guid}"
+                    p_title = r["paper_title"] or "Academic Paper"
+                    if p_node_id not in node_ids:
+                        node_ids.add(p_node_id)
+                        nodes.append(
+                            GraphNode(
+                                id=p_node_id,
+                                label=p_title[:24] + "..." if len(p_title) > 26 else p_title,
+                                node_type="paper",
+                                properties={
+                                    "paper_id": str(p_guid),
+                                    "title": p_title,
+                                    "doi": r["paper_doi"],
+                                    "year": r["publication_year"],
+                                },
+                            )
+                        )
+
+                    edge_key = (obs_node_id, p_node_id, "REPORTED_IN")
+                    if edge_key not in edge_keys:
+                        edge_keys.add(edge_key)
+                        edges.append(
+                            GraphEdge(
+                                id=f"e_{len(edges)}",
+                                source=obs_node_id,
+                                target=p_node_id,
+                                edge_type="REPORTED_IN",
+                                label="报道于文献",
+                            )
+                        )
+
+                    p_meta = _json(r["paper_metadata"]) or {}
+                    author_name = p_meta.get("first_author")
+                    if author_name:
+                        a_node_id = f"auth_{author_name.replace(' ', '_')}"
+                        if a_node_id not in node_ids:
+                            node_ids.add(a_node_id)
                             nodes.append(
                                 GraphNode(
-                                    id=p_node_id,
-                                    label=p.title[:26] + "..." if len(p.title) > 28 else p.title,
-                                    node_type="paper",
-                                    properties={
-                                        "paper_id": str(p.id),
-                                        "title": p.title,
-                                        "doi": p.doi,
-                                        "journal": p.journal,
-                                        "year": p.publication_year,
-                                        "first_author": p.first_author,
-                                        "corresponding_author": p.corresponding_author,
-                                    },
+                                    id=a_node_id,
+                                    label=author_name,
+                                    node_type="first_author",
+                                    properties={"name": author_name},
                                 )
                             )
-
-                        edge_key = (m_node_id, p_node_id, "EVIDENCED_BY")
+                        edge_key = (p_node_id, a_node_id, "AUTHORED_BY")
                         if edge_key not in edge_keys:
                             edge_keys.add(edge_key)
                             edges.append(
                                 GraphEdge(
                                     id=f"e_{len(edges)}",
-                                    source=m_node_id,
-                                    target=p_node_id,
-                                    edge_type="EVIDENCED_BY",
-                                    label="文献证据",
+                                    source=p_node_id,
+                                    target=a_node_id,
+                                    edge_type="AUTHORED_BY",
+                                    label="学者发表",
                                 )
                             )
 
-                        # 第一作者同级节点
-                        if p.first_author and p.first_author.strip():
-                            fa_name = p.first_author.strip()
-                            fa_node_id = f"author_{re.sub(r'[^a-zA-Z0-9]', '_', fa_name)}"
-                            if fa_node_id not in node_ids:
-                                node_ids.add(fa_node_id)
+        # 模式 A: 文献证据子图谱 (subgraph == "literature" 或 (material_id and subgraph != "macro"))
+        elif subgraph == "literature" or (material_id and subgraph != "macro"):
+            max_papers_per_mat = min(limit, 35)
+            for m in materials:
+                m_node_id = f"mat_{m.id}"
+                formula_clean = m.canonical_formula
+
+                # SQL 下推：检索与该材料直接或语义相关的文献
+                p_sql = """
+                    SELECT DISTINCT p.id, p.doi, p.title, p.journal,
+                           p.publication_year, p.abstract, p.metadata_json, p.created_at
+                    FROM lit_paper p
+                    WHERE EXISTS (
+                        SELECT 1 FROM sam_sample s WHERE s.source_paper_id = p.id AND s.nominal_material_id = :mid
+                    )
+                    OR p.title LIKE :form_query
+                    OR p.abstract LIKE :form_query
+                    OR JSON_SEARCH(p.metadata_json, 'one', :formula, NULL, '$.related_materials') IS NOT NULL
+                    ORDER BY p.publication_year DESC, p.created_at DESC
+                    LIMIT :paper_limit
+                """
+                p_rows = (
+                    await self.session.execute(
+                        text(p_sql),
+                        {
+                            "mid": m.id.bytes,
+                            "form_query": f"%{formula_clean}%",
+                            "formula": formula_clean,
+                            "paper_limit": max_papers_per_mat,
+                        },
+                    )
+                ).mappings().all()
+
+                for pr in p_rows:
+                    p_guid = _uuid(pr["id"])
+                    p_node_id = f"paper_{p_guid}"
+                    p_meta = _json(pr["metadata_json"]) or {}
+                    p_title = pr["title"]
+                    p_first_author = p_meta.get("first_author")
+                    p_corr_author = p_meta.get("corresponding_author")
+
+                    if p_node_id not in node_ids:
+                        node_ids.add(p_node_id)
+                        nodes.append(
+                            GraphNode(
+                                id=p_node_id,
+                                label=p_title[:26] + "..." if len(p_title) > 28 else p_title,
+                                node_type="paper",
+                                properties={
+                                    "paper_id": str(p_guid),
+                                    "title": p_title,
+                                    "doi": pr["doi"],
+                                    "journal": pr["journal"],
+                                    "year": pr["publication_year"],
+                                    "first_author": p_first_author,
+                                    "corresponding_author": p_corr_author,
+                                },
+                            )
+                        )
+
+                    edge_key = (m_node_id, p_node_id, "EVIDENCED_BY")
+                    if edge_key not in edge_keys:
+                        edge_keys.add(edge_key)
+                        edges.append(
+                            GraphEdge(
+                                id=f"e_{len(edges)}",
+                                source=m_node_id,
+                                target=p_node_id,
+                                edge_type="EVIDENCED_BY",
+                                label="文献证据",
+                            )
+                        )
+
+                    # 第一作者同级节点
+                    if p_first_author and p_first_author.strip():
+                        fa_name = p_first_author.strip()
+                        fa_node_id = f"author_{re.sub(r'[^a-zA-Z0-9]', '_', fa_name)}"
+                        if fa_node_id not in node_ids:
+                            node_ids.add(fa_node_id)
+                            nodes.append(
+                                GraphNode(
+                                    id=fa_node_id,
+                                    label=fa_name,
+                                    node_type="first_author",
+                                    properties={"name": fa_name, "role": "第一作者"},
+                                )
+                            )
+                        fa_edge_key = (p_node_id, fa_node_id, "FIRST_AUTHORED_BY")
+                        if fa_edge_key not in edge_keys:
+                            edge_keys.add(fa_edge_key)
+                            edges.append(
+                                GraphEdge(
+                                    id=f"e_{len(edges)}",
+                                    source=p_node_id,
+                                    target=fa_node_id,
+                                    edge_type="FIRST_AUTHORED_BY",
+                                    label="第一作者",
+                                )
+                            )
+
+                    # 通讯作者同级节点
+                    if p_corr_author and p_corr_author.strip():
+                        ca_name = p_corr_author.strip()
+                        if not p_first_author or ca_name != p_first_author.strip():
+                            ca_node_id = f"author_{re.sub(r'[^a-zA-Z0-9]', '_', ca_name)}"
+                            if ca_node_id not in node_ids:
+                                node_ids.add(ca_node_id)
                                 nodes.append(
                                     GraphNode(
-                                        id=fa_node_id,
-                                        label=fa_name,
-                                        node_type="first_author",
-                                        properties={"name": fa_name, "role": "第一作者"},
+                                        id=ca_node_id,
+                                        label=ca_name,
+                                        node_type="corresponding_author",
+                                        properties={"name": ca_name, "role": "通讯作者"},
                                     )
                                 )
-                            fa_edge_key = (p_node_id, fa_node_id, "FIRST_AUTHORED_BY")
-                            if fa_edge_key not in edge_keys:
-                                edge_keys.add(fa_edge_key)
+                            ca_edge_key = (p_node_id, ca_node_id, "CORRESPONDING_AUTHORED_BY")
+                            if ca_edge_key not in edge_keys:
+                                edge_keys.add(ca_edge_key)
                                 edges.append(
                                     GraphEdge(
                                         id=f"e_{len(edges)}",
                                         source=p_node_id,
-                                        target=fa_node_id,
-                                        edge_type="FIRST_AUTHORED_BY",
-                                        label="第一作者",
+                                        target=ca_node_id,
+                                        edge_type="CORRESPONDING_AUTHORED_BY",
+                                        label="通讯作者",
                                     )
                                 )
 
-                        # 通讯作者同级节点（若与第一作者不同）
-                        if p.corresponding_author and p.corresponding_author.strip():
-                            ca_name = p.corresponding_author.strip()
-                            if not p.first_author or ca_name != p.first_author.strip():
-                                ca_node_id = f"author_{re.sub(r'[^a-zA-Z0-9]', '_', ca_name)}"
-                                if ca_node_id not in node_ids:
-                                    node_ids.add(ca_node_id)
-                                    nodes.append(
-                                        GraphNode(
-                                            id=ca_node_id,
-                                            label=ca_name,
-                                            node_type="corresponding_author",
-                                            properties={"name": ca_name, "role": "通讯作者"},
-                                        )
-                                    )
-                                ca_edge_key = (p_node_id, ca_node_id, "CORRESPONDING_AUTHORED_BY")
-                                if ca_edge_key not in edge_keys:
-                                    edge_keys.add(ca_edge_key)
-                                    edges.append(
-                                        GraphEdge(
-                                            id=f"e_{len(edges)}",
-                                            source=p_node_id,
-                                            target=ca_node_id,
-                                            edge_type="CORRESPONDING_AUTHORED_BY",
-                                            label="通讯作者",
-                                        )
-                                    )
-
-                        # 收录期刊同级节点
-                        if p.journal and p.journal.strip():
-                            j_name = p.journal.strip()
-                            j_node_id = f"journal_{re.sub(r'[^a-zA-Z0-9]', '_', j_name)}"
-                            if j_node_id not in node_ids:
-                                node_ids.add(j_node_id)
-                                nodes.append(
-                                    GraphNode(
-                                        id=j_node_id,
-                                        label=j_name[:24] + "..." if len(j_name) > 26 else j_name,
-                                        node_type="journal",
-                                        properties={"name": j_name},
-                                    )
+                    # 收录期刊同级节点
+                    if pr["journal"] and pr["journal"].strip():
+                        j_name = pr["journal"].strip()
+                        j_node_id = f"journal_{re.sub(r'[^a-zA-Z0-9]', '_', j_name)}"
+                        if j_node_id not in node_ids:
+                            node_ids.add(j_node_id)
+                            nodes.append(
+                                GraphNode(
+                                    id=j_node_id,
+                                    label=j_name[:24] + "..." if len(j_name) > 26 else j_name,
+                                    node_type="journal",
+                                    properties={"name": j_name},
                                 )
-                            j_edge_key = (p_node_id, j_node_id, "PUBLISHED_IN")
-                            if j_edge_key not in edge_keys:
-                                edge_keys.add(j_edge_key)
-                                edges.append(
-                                    GraphEdge(
-                                        id=f"e_{len(edges)}",
-                                        source=p_node_id,
-                                        target=j_node_id,
-                                        edge_type="PUBLISHED_IN",
-                                        label="发表于",
-                                    )
+                            )
+                        j_edge_key = (p_node_id, j_node_id, "PUBLISHED_IN")
+                        if j_edge_key not in edge_keys:
+                            edge_keys.add(j_edge_key)
+                            edges.append(
+                                GraphEdge(
+                                    id=f"e_{len(edges)}",
+                                    source=p_node_id,
+                                    target=j_node_id,
+                                    edge_type="PUBLISHED_IN",
+                                    label="发表于",
                                 )
+                            )
 
         # 模式 B: 主宏观科学图谱 (Core Macro Graph)
         else:
@@ -1568,7 +1821,9 @@ class MySQLCatalogRepository:
                 chem_sys = m.chemical_system or ""
                 elements_in_mat = [el for el in chem_sys.split("-") if el in VALID_ELEMENTS]
                 if not elements_in_mat:
-                    elements_in_mat = [el for el in re.findall(r"[A-Z][a-z]?", m.canonical_formula) if el in VALID_ELEMENTS]
+                    elements_in_mat = [
+                        el for el in re.findall(r"[A-Z][a-z]?", m.canonical_formula) if el in VALID_ELEMENTS
+                    ]
 
                 for el in set(elements_in_mat):
                     el_node_id = f"elem_{el}"
@@ -1694,49 +1949,69 @@ class MySQLCatalogRepository:
                             )
                         )
 
-            # 4. 仅在显式请求 include_papers=True 时将论文加入宏观主图（避免平铺爆炸）
+            # 4. 仅在显式请求 include_papers=True 时将精选论文加入宏观主图（避免平铺爆炸）
             if include_papers:
-                papers = await self.list_papers(query=None, limit=30)
-                for p in papers:
-                    p_node_id = f"paper_{p.id}"
-                    linked_mats: list[MaterialRead] = []
-                    for m in materials:
-                        formula_clean = m.canonical_formula.lower()
-                        if formula_clean in p.title.lower() or (p.abstract and formula_clean in p.abstract.lower()):
-                            linked_mats.append(m)
+                for m in materials[:6]:
+                    p_sql = """
+                        SELECT DISTINCT p.id, p.doi, p.title, p.journal,
+                               p.publication_year, p.metadata_json, p.created_at
+                        FROM lit_paper p
+                        WHERE EXISTS (
+                            SELECT 1 FROM sam_sample s WHERE s.source_paper_id = p.id AND s.nominal_material_id = :mid
+                        )
+                        OR p.title LIKE :form_query
+                        OR p.abstract LIKE :form_query
+                        OR JSON_SEARCH(p.metadata_json, 'one', :formula, NULL, '$.related_materials') IS NOT NULL
+                        ORDER BY p.publication_year DESC, p.created_at DESC
+                        LIMIT 3
+                    """
+                    p_rows = (
+                        await self.session.execute(
+                            text(p_sql),
+                            {
+                                "mid": m.id.bytes,
+                                "form_query": f"%{m.canonical_formula}%",
+                                "formula": m.canonical_formula,
+                            },
+                        )
+                    ).mappings().all()
 
-                    if linked_mats:
+                    for pr in p_rows:
+                        p_guid = _uuid(pr["id"])
+                        p_node_id = f"paper_{p_guid}"
+                        p_meta = _json(pr["metadata_json"]) or {}
+                        p_title = pr["title"]
+
                         if p_node_id not in node_ids:
                             node_ids.add(p_node_id)
                             nodes.append(
                                 GraphNode(
                                     id=p_node_id,
-                                    label=p.title[:24] + "..." if len(p.title) > 26 else p.title,
+                                    label=p_title[:24] + "..." if len(p_title) > 26 else p_title,
                                     node_type="paper",
                                     properties={
-                                        "paper_id": str(p.id),
-                                        "title": p.title,
-                                        "doi": p.doi,
-                                        "journal": p.journal,
-                                        "year": p.publication_year,
-                                        "first_author": p.first_author,
-                                        "corresponding_author": p.corresponding_author,
+                                        "paper_id": str(p_guid),
+                                        "title": p_title,
+                                        "doi": pr["doi"],
+                                        "journal": pr["journal"],
+                                        "year": pr["publication_year"],
+                                        "first_author": p_meta.get("first_author"),
+                                        "corresponding_author": p_meta.get("corresponding_author"),
                                     },
                                 )
                             )
-                        for lm in linked_mats:
-                            edge_key = (f"mat_{lm.id}", p_node_id, "EVIDENCED_BY")
-                            if edge_key not in edge_keys:
-                                edge_keys.add(edge_key)
-                                edges.append(
-                                    GraphEdge(
-                                        id=f"e_{len(edges)}",
-                                        source=f"mat_{lm.id}",
-                                        target=p_node_id,
-                                        edge_type="EVIDENCED_BY",
-                                        label="文献证据",
-                                    )
+                        edge_key = (f"mat_{m.id}", p_node_id, "EVIDENCED_BY")
+                        if edge_key not in edge_keys:
+                            edge_keys.add(edge_key)
+                            edges.append(
+                                GraphEdge(
+                                    id=f"e_{len(edges)}",
+                                    source=f"mat_{m.id}",
+                                    target=p_node_id,
+                                    edge_type="EVIDENCED_BY",
+                                    label="文献证据",
                                 )
+                            )
 
         mat_cnt = sum(1 for n in nodes if n.node_type == "material")
         elem_cnt = sum(1 for n in nodes if n.node_type == "element")
@@ -1745,6 +2020,8 @@ class MySQLCatalogRepository:
         sys_cnt = sum(1 for n in nodes if n.node_type == "system")
         author_cnt = sum(1 for n in nodes if n.node_type in ("author", "first_author", "corresponding_author"))
         journal_cnt = sum(1 for n in nodes if n.node_type == "journal")
+        dopant_cnt = sum(1 for n in nodes if n.node_type == "dopant")
+        obs_cnt = sum(1 for n in nodes if n.node_type == "observation")
 
         return KnowledgeGraphResponse(
             nodes=nodes,
@@ -1759,5 +2036,206 @@ class MySQLCatalogRepository:
                 system_count=sys_cnt,
                 author_count=author_cnt,
                 journal_count=journal_cnt,
+                dopant_count=dopant_cnt,
+                observation_count=obs_cnt,
             ),
         )
+
+    async def get_property_comparison(
+        self,
+        property_code: str = "crystallization_temperature",
+        base_material: str | None = None,
+        heating_rate: float | None = None,
+        display_unit: str = "celsius",
+    ) -> PropertyComparisonResponse:
+        """多维相变物性跨文献横向对比与箱线图统计数据查询。"""
+        pdefs = (
+            await self.session.execute(
+                text("SELECT code, name, symbol FROM obs_property_definition ORDER BY name ASC")
+            )
+        ).mappings().all()
+        avail_props = [{"code": r["code"], "name": r["name"]} for r in pdefs]
+
+        curr_pdef = next((p for p in pdefs if p["code"] == property_code), None)
+        curr_pname = curr_pdef["name"] if curr_pdef else property_code
+
+        sql = """
+            SELECT
+                o.id AS obs_id,
+                pdef.code AS property_code,
+                pdef.name AS property_name,
+                m.id AS material_id,
+                m.canonical_formula AS base_material,
+                s.sample_label,
+                s.thickness_value,
+                s.substrate_material,
+                meas.instrument AS measurement_method,
+                meas.heating_rate_value,
+                meas.heating_rate_unit,
+                o.value_numeric,
+                o.original_value_text,
+                o.original_unit_text,
+                o.normalized_value,
+                o.verification_status,
+                o.quality_score,
+                p.id AS paper_id,
+                p.title AS paper_title,
+                p.doi AS paper_doi,
+                p.publication_year,
+                p.metadata_json AS paper_metadata,
+                ef.figure_number,
+                ef.page_number,
+                ef.text_snippet
+            FROM obs_observation o
+            JOIN obs_property_definition pdef ON o.property_definition_id = pdef.id
+            JOIN sam_sample s ON o.sample_id = s.id
+            JOIN mat_material m ON s.nominal_material_id = m.id
+            LEFT JOIN exp_measurement meas ON o.measurement_id = meas.id
+            LEFT JOIN lit_paper p ON s.source_paper_id = p.id
+            LEFT JOIN evd_observation_link eol ON o.id = eol.observation_id
+            LEFT JOIN evd_fragment ef ON (eol.evidence_fragment_id = ef.id OR meas.evidence_id = ef.id)
+            WHERE pdef.code = :pcode
+              AND o.verification_status != 'RETRACTED'
+            ORDER BY o.created_at DESC
+        """
+        rows = (await self.session.execute(text(sql), {"pcode": property_code})).mappings().all()
+
+        data_points: list[PropertyComparisonDataPoint] = []
+        all_materials: set[str] = set()
+        all_heating_rates: set[float] = set()
+
+        for r in rows:
+            b_mat = r["base_material"]
+            all_materials.add(b_mat)
+
+            hr_val = float(r["heating_rate_value"]) if r["heating_rate_value"] is not None else None
+            if hr_val is not None:
+                all_heating_rates.add(hr_val)
+
+            if base_material and base_material != "all" and b_mat != base_material:
+                continue
+
+            if heating_rate is not None and hr_val is not None:
+                if abs(hr_val - heating_rate) > 0.1:
+                    continue
+
+            label = r["sample_label"] or b_mat
+            dop_elem = None
+            dop_pct = None
+            m_dop = re.search(r"([A-Z][a-z]?)(?:_?doped|\s*[-_]?\s*(\d+(?:\.\d+)?)\s*(?:at\.?%|%))", label, re.I)
+            if not m_dop:
+                for cand_elem in ("Bi", "In", "Sb", "Ag", "N", "C", "Ti", "Sc", "Cr", "Cu", "Al", "Si"):
+                    if b_mat == "GeTe" and cand_elem in ("Ge", "Te"):
+                        continue
+                    if b_mat == "Sb2Te3" and cand_elem in ("Sb", "Te"):
+                        continue
+                    m_form = re.search(rf"{cand_elem}(\d+(?:\.\d+)?)", label)
+                    if m_form:
+                        dop_elem = cand_elem
+                        try:
+                            dop_pct = float(m_form.group(1))
+                        except ValueError:
+                            pass
+                        break
+                    elif re.search(rf"\b{cand_elem}\b", label):
+                        dop_elem = cand_elem
+                        break
+            else:
+                dop_elem = m_dop.group(1)
+                if m_dop.group(2):
+                    dop_pct = float(m_dop.group(2))
+
+            val_num = float(r["value_numeric"]) if r["value_numeric"] is not None else 0.0
+            orig_unit = (r["original_unit_text"] or "").strip()
+            val_disp = val_num
+            target_unit = orig_unit or "°C"
+
+            if property_code in ("crystallization_temperature", "melting_temperature", "glass_transition_temperature"):
+                if display_unit == "celsius":
+                    target_unit = "°C"
+                    if orig_unit.lower() in ("k", "kelvin"):
+                        val_disp = val_num - 273.15
+                    else:
+                        val_disp = val_num
+                else:
+                    target_unit = "K"
+                    if orig_unit.lower() in ("°c", "c", "celsius"):
+                        val_disp = val_num + 273.15
+                    else:
+                        val_disp = val_num
+
+            meta = _json(r["paper_metadata"]) or {}
+            p_author = meta.get("first_author")
+
+            dp = PropertyComparisonDataPoint(
+                observation_id=_uuid(r["obs_id"]) or uuid7(),
+                property_code=r["property_code"],
+                property_name=r["property_name"],
+                material_formula=label.split("-")[0],
+                base_material=b_mat,
+                dopant_element=dop_elem,
+                dopant_at_pct=dop_pct,
+                sample_formula=label,
+                value=round(val_disp, 2),
+                unit=target_unit,
+                normalized_value=float(r["normalized_value"]) if r["normalized_value"] is not None else None,
+                normalized_unit="K" if property_code == "crystallization_temperature" else orig_unit,
+                heating_rate_k_per_min=hr_val,
+                measurement_method=r["measurement_method"],
+                film_thickness_nm=float(r["thickness_value"]) if r["thickness_value"] is not None else None,
+                substrate=r["substrate_material"],
+                paper_id=_uuid(r["paper_id"]),
+                paper_title=r["paper_title"],
+                paper_doi=r["paper_doi"],
+                paper_year=r["publication_year"],
+                first_author=p_author,
+                evidence_snippet=r["text_snippet"],
+                figure_or_table=r["figure_number"],
+                page_number=r["page_number"],
+                verification_status=r["verification_status"],
+                quality_score=float(r["quality_score"]) if r["quality_score"] is not None else None,
+            )
+            data_points.append(dp)
+
+        group_values: dict[str, list[float]] = {}
+        for dp in data_points:
+            grp = f"{dp.base_material}" + (f" + {dp.dopant_element}" if dp.dopant_element else " (本征)")
+            group_values.setdefault(grp, []).append(dp.value)
+
+        box_stats: list[PropertyBoxPlotStat] = []
+        for grp, vals in group_values.items():
+            s_vals = sorted(vals)
+            n = len(s_vals)
+            if n == 0:
+                continue
+            min_v = s_vals[0]
+            max_v = s_vals[-1]
+            med_v = s_vals[n // 2] if n % 2 == 1 else (s_vals[n // 2 - 1] + s_vals[n // 2]) / 2.0
+            q1_v = s_vals[n // 4]
+            q3_v = s_vals[(3 * n) // 4]
+            box_stats.append(
+                PropertyBoxPlotStat(
+                    group_name=grp,
+                    count=n,
+                    min_val=round(min_v, 2),
+                    q1=round(q1_v, 2),
+                    median=round(med_v, 2),
+                    q3=round(q3_v, 2),
+                    max_val=round(max_v, 2),
+                )
+            )
+
+        box_stats.sort(key=lambda b: b.median, reverse=True)
+
+        return PropertyComparisonResponse(
+            property_code=property_code,
+            property_name=curr_pname,
+            display_unit="°C" if display_unit == "celsius" else "K",
+            total_count=len(data_points),
+            data_points=data_points,
+            box_plot_stats=box_stats,
+            available_properties=avail_props,
+            available_materials=sorted(list(all_materials)),
+            available_heating_rates=sorted(list(all_heating_rates)),
+        )
+

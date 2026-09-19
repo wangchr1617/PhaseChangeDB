@@ -136,6 +136,8 @@ export interface GraphNode {
     | 'corresponding_author'
     | 'author'
     | 'journal'
+    | 'dopant'
+    | 'observation'
   properties?: Record<string, unknown>
   // 仿真动力学计算属性
   x?: number
@@ -163,12 +165,84 @@ export interface GraphSummary {
   system_count?: number
   author_count?: number
   journal_count?: number
+  dopant_count?: number
+  observation_count?: number
 }
 
 export interface KnowledgeGraphResponse {
   nodes: GraphNode[]
   edges: GraphEdge[]
   summary: GraphSummary
+}
+
+export interface PropertyComparisonDataPoint {
+  observation_id: string
+  property_code: string
+  property_name: string
+  material_formula: string
+  base_material: string
+  dopant_element?: string | null
+  dopant_at_pct?: number | null
+  sample_formula?: string | null
+  value?: number | null
+  unit?: string | null
+  normalized_value?: number | null
+  normalized_unit?: string | null
+  heating_rate_k_per_min?: number | null
+  measurement_method?: string | null
+  film_thickness_nm?: number | null
+  substrate?: string | null
+  paper_id?: string | null
+  paper_title?: string | null
+  paper_doi?: string | null
+  paper_year?: number | null
+  first_author?: string | null
+  evidence_snippet?: string | null
+  figure_or_table?: string | null
+  page_number?: number | null
+  verification_status: string
+  quality_score?: number | null
+
+  // 兼容旧字段
+  material_id?: string
+  sample_id?: string
+  dopant_concentration?: number | null
+  sample_label?: string | null
+  value_numeric?: number | null
+  original_unit?: string | null
+  heating_rate_value?: number | null
+  heating_rate_unit?: string | null
+  publication_year?: number | null
+  figure_reference?: string | null
+  journal?: string | null
+}
+
+export interface PropertyBoxPlotStat {
+  group_name: string
+  count: number
+  min_val: number
+  q1: number
+  median: number
+  q3: number
+  max_val: number
+  min?: number
+  max?: number
+  mean?: number
+  unit?: string
+}
+
+export interface PropertyComparisonResponse {
+  property_code: string
+  property_name: string
+  display_unit: string
+  total_count: number
+  data_points: PropertyComparisonDataPoint[]
+  box_plot_stats: PropertyBoxPlotStat[]
+  available_properties: Array<{ code: string; name: string }>
+  available_materials: string[]
+  available_heating_rates: number[]
+  unit?: string
+  available_base_materials?: string[]
 }
 
 export interface VariantObservationRead {

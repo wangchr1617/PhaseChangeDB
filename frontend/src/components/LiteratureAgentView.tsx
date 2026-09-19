@@ -194,10 +194,9 @@ export function LiteratureAgentView({ onOpenBatchUpload }: LiteratureAgentViewPr
 
         <div className="agent-hero-content">
           <div>
-            <h2 className="agent-hero-title">相变文献智能解析智能体 (Scientist Literature Agent)</h2>
+            <h2 className="agent-hero-title">相变文献智能解析智能体</h2>
             <p className="agent-hero-desc">
-              具备材料科学领域知识的多模态大模型抽取工作流。自动化完成 PDF 文档解析、相转变参数结构化提取、
-              实验条件归一化与证据碎片（evd_fragment）精准锚定，成果安全流入暂存区等待专家仲裁。
+              自动解析文献并提取相变参数与实验条件，精准锚定证据，经暂存区待专家审核入库。
             </p>
           </div>
 

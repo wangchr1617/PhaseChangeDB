@@ -49,6 +49,8 @@ class MeasurementIntake(APIModel):
     instrument: str | None = Field(default=None, max_length=255)
     temperature_value: float | None = None
     temperature_unit: str | None = Field(default=None, max_length=32)
+    heating_rate_value: float | None = None
+    heating_rate_unit: str | None = Field(default=None, max_length=32)
 
 
 class ObservationIntake(APIModel):

@@ -948,6 +948,99 @@
         }
       }
     },
+    "/v1/analytics/property-comparison": {
+      "get": {
+        "tags": [
+          "analytics"
+        ],
+        "summary": "多维相变材料物性跨文献横向对比与统计分布",
+        "operationId": "get_property_comparison_v1_analytics_property_comparison_get",
+        "parameters": [
+          {
+            "name": "property_code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "属性代码",
+              "default": "crystallization_temperature",
+              "title": "Property Code"
+            },
+            "description": "属性代码"
+          },
+          {
+            "name": "base_material",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "基础材料筛选（如 GeTe, Sb2Te3）",
+              "title": "Base Material"
+            },
+            "description": "基础材料筛选（如 GeTe, Sb2Te3）"
+          },
+          {
+            "name": "heating_rate",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "升温速率筛选 (K/min)",
+              "title": "Heating Rate"
+            },
+            "description": "升温速率筛选 (K/min)"
+          },
+          {
+            "name": "display_unit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "温度显示单位 (celsius / kelvin)",
+              "default": "celsius",
+              "title": "Display Unit"
+            },
+            "description": "温度显示单位 (celsius / kelvin)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PropertyComparisonResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/workflow/intake": {
       "post": {
         "tags": [
@@ -3310,6 +3403,16 @@
             "type": "integer",
             "title": "Journal Count",
             "default": 0
+          },
+          "dopant_count": {
+            "type": "integer",
+            "title": "Dopant Count",
+            "default": 0
+          },
+          "observation_count": {
+            "type": "integer",
+            "title": "Observation Count",
+            "default": 0
           }
         },
         "additionalProperties": false,
@@ -3972,6 +4075,29 @@
               }
             ],
             "title": "Temperature Unit"
+          },
+          "heating_rate_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Heating Rate Value"
+          },
+          "heating_rate_unit": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Heating Rate Unit"
           }
         },
         "additionalProperties": false,
@@ -5687,6 +5813,365 @@
           "title"
         ],
         "title": "ParsedPaperPreview"
+      },
+      "PropertyBoxPlotStat": {
+        "properties": {
+          "group_name": {
+            "type": "string",
+            "title": "Group Name"
+          },
+          "count": {
+            "type": "integer",
+            "title": "Count"
+          },
+          "min_val": {
+            "type": "number",
+            "title": "Min Val"
+          },
+          "q1": {
+            "type": "number",
+            "title": "Q1"
+          },
+          "median": {
+            "type": "number",
+            "title": "Median"
+          },
+          "q3": {
+            "type": "number",
+            "title": "Q3"
+          },
+          "max_val": {
+            "type": "number",
+            "title": "Max Val"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "group_name",
+          "count",
+          "min_val",
+          "q1",
+          "median",
+          "q3",
+          "max_val"
+        ],
+        "title": "PropertyBoxPlotStat"
+      },
+      "PropertyComparisonDataPoint": {
+        "properties": {
+          "observation_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Observation Id"
+          },
+          "property_code": {
+            "type": "string",
+            "title": "Property Code"
+          },
+          "property_name": {
+            "type": "string",
+            "title": "Property Name"
+          },
+          "material_formula": {
+            "type": "string",
+            "title": "Material Formula"
+          },
+          "base_material": {
+            "type": "string",
+            "title": "Base Material"
+          },
+          "dopant_element": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dopant Element"
+          },
+          "dopant_at_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dopant At Pct"
+          },
+          "sample_formula": {
+            "type": "string",
+            "title": "Sample Formula"
+          },
+          "value": {
+            "type": "number",
+            "title": "Value"
+          },
+          "unit": {
+            "type": "string",
+            "title": "Unit"
+          },
+          "normalized_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Normalized Value"
+          },
+          "normalized_unit": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Normalized Unit"
+          },
+          "heating_rate_k_per_min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Heating Rate K Per Min"
+          },
+          "measurement_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Measurement Method"
+          },
+          "film_thickness_nm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Film Thickness Nm"
+          },
+          "substrate": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Substrate"
+          },
+          "paper_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Id"
+          },
+          "paper_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Title"
+          },
+          "paper_doi": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Doi"
+          },
+          "paper_year": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Year"
+          },
+          "first_author": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Author"
+          },
+          "evidence_snippet": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Snippet"
+          },
+          "figure_or_table": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Figure Or Table"
+          },
+          "page_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Number"
+          },
+          "verification_status": {
+            "type": "string",
+            "title": "Verification Status"
+          },
+          "quality_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quality Score"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "observation_id",
+          "property_code",
+          "property_name",
+          "material_formula",
+          "base_material",
+          "sample_formula",
+          "value",
+          "unit",
+          "verification_status"
+        ],
+        "title": "PropertyComparisonDataPoint"
+      },
+      "PropertyComparisonResponse": {
+        "properties": {
+          "property_code": {
+            "type": "string",
+            "title": "Property Code"
+          },
+          "property_name": {
+            "type": "string",
+            "title": "Property Name"
+          },
+          "display_unit": {
+            "type": "string",
+            "title": "Display Unit"
+          },
+          "total_count": {
+            "type": "integer",
+            "title": "Total Count"
+          },
+          "data_points": {
+            "items": {
+              "$ref": "#/components/schemas/PropertyComparisonDataPoint"
+            },
+            "type": "array",
+            "title": "Data Points"
+          },
+          "box_plot_stats": {
+            "items": {
+              "$ref": "#/components/schemas/PropertyBoxPlotStat"
+            },
+            "type": "array",
+            "title": "Box Plot Stats"
+          },
+          "available_properties": {
+            "items": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Available Properties"
+          },
+          "available_materials": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Available Materials"
+          },
+          "available_heating_rates": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array",
+            "title": "Available Heating Rates"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "property_code",
+          "property_name",
+          "display_unit",
+          "total_count",
+          "data_points",
+          "box_plot_stats",
+          "available_properties",
+          "available_materials",
+          "available_heating_rates"
+        ],
+        "title": "PropertyComparisonResponse"
       },
       "PropertyOption": {
         "properties": {
