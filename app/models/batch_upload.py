@@ -162,3 +162,64 @@ class KnowledgeGraphResponse(APIModel):
     nodes: list[GraphNode]
     edges: list[GraphEdge]
     summary: GraphSummary
+
+
+class AgentDiagnosticRequest(APIModel):
+    provider: str = Field(default="gemini", description="服务商: gemini 或 openai_compatible")
+    base_url: str | None = Field(default=None, description="自定义基准接口地址")
+    model_name: str = Field(default="gemini-2.5-pro", description="模型标识符")
+    api_key: str | None = Field(default=None, description="用户自定义 API Key (可选)")
+
+
+class AgentDiagnosticResponse(APIModel):
+    status: str = Field(description="诊断状态: success | warning | error")
+    model_name: str
+    provider: str
+    key_mode: str = Field(description="密钥模式: custom_user_key | server_hosted_key | demo_simulation")
+    masked_key: str
+    latency_ms: int
+    logs: list[str]
+
+
+class ExtractedPropertyItem(APIModel):
+    property_code: str
+    nominal_material: str
+    sample_formula: str
+    dopant_element: str | None = None
+    dopant_ratio_at_pct: float | None = None
+    original_value: float
+    original_unit: str
+    normalized_value: float | None = None
+    normalized_unit_term_id: UUID | None = None
+    heating_rate_k_per_min: float | None = None
+    film_thickness_nm: float | None = None
+    substrate: str | None = None
+    measurement_method: str | None = None
+    evidence_text: str
+    figure_or_table: str | None = None
+    page_number: int = 1
+    confidence: float = 0.9
+
+
+class AgentExtractRequest(APIModel):
+    text: str = Field(min_length=10, description="待抽取的文献全文、段落或图表上下文文本")
+    paper_id: UUID | None = Field(default=None, description="已入库文献的 UUID (可选)")
+    paper_title: str | None = Field(default=None, description="文献标题")
+    paper_doi: str | None = Field(default=None, description="文献 DOI")
+    first_author: str | None = Field(default=None, description="第一作者")
+    provider: str = Field(default="gemini", description="推理引擎提供商: gemini | openai_compatible")
+    model_name: str = Field(default="gemini-2.5-pro", description="大模型标识")
+    api_key: str | None = Field(default=None, description="用户自备 API Key (可选)")
+    auto_stage: bool = Field(default=True, description="是否自动写入 ext_candidate 暂存区")
+
+
+class AgentExtractResponse(APIModel):
+    status: str = "success"
+    model_used: str
+    provider: str
+    key_mode: str
+    candidates_extracted: int
+    staged_candidate_ids: list[UUID] = Field(default_factory=list)
+    candidates: list[ExtractedPropertyItem] = Field(default_factory=list)
+    logs: list[str] = Field(default_factory=list)
+

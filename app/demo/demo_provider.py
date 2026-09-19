@@ -11,19 +11,23 @@ from pathlib import Path
 from typing import Any
 
 from app.models.batch_upload import (
+    BatchIngestRequest,
+    BatchIngestResponse,
     KnowledgeGraphResponse,
     LiteratureAgentConfig,
     LiteratureStatsResponse,
+    ObservationConflictGroup,
 )
 from app.models.config import AppConfigRead, AppConfigUpdate
-from app.models.literature import PaperRead
-from app.models.material import MaterialRead
+from app.models.literature import PaperCreate, PaperRead
+from app.models.material import MaterialCreate, MaterialRead
 from app.models.mvp import (
     DashboardRead,
     ObservationListItem,
     PropertyComparisonResponse,
     PropertyOption,
 )
+from app.models.observation import ObservationCreate, ObservationRead
 from app.models.search import SearchResponse
 
 SNAPSHOT_PATH = Path(__file__).resolve().parent / "demo_snapshot.json"
@@ -48,41 +52,54 @@ class DemoCatalogRepository:
             pending_outbox_events=d.get("pending_outbox_events", 0),
         )
 
-    async def list_materials(self, **kwargs: Any) -> list[MaterialRead]:
+    async def list_materials(self, *args: Any, **kwargs: Any) -> list[MaterialRead]:
         raw = self._data.get("materials", {}).get("items", [])
         return [MaterialRead.model_validate(m) for m in raw]
 
-    async def get_material(self, material_id: str) -> MaterialRead | None:
+    async def get_material(self, material_id: str, *args: Any, **kwargs: Any) -> MaterialRead | None:
         raw = self._data.get("materials", {}).get("items", [])
         for m in raw:
-            if m.get("id") == material_id:
+            if str(m.get("id")) == str(material_id):
                 return MaterialRead.model_validate(m)
         if raw:
             return MaterialRead.model_validate(raw[0])
         return None
 
-    async def get_existing_elements(self) -> list[str]:
+    async def get_material_conflicts(self, material_id: str, *args: Any, **kwargs: Any) -> list[ObservationConflictGroup]:
+        raw = self._data.get("conflicts", [])
+        return [ObservationConflictGroup.model_validate(c) for c in raw]
+
+    async def get_existing_elements(self, *args: Any, **kwargs: Any) -> list[str]:
         return self._data.get("elements", ["Ge", "Te", "Sb", "Bi", "In", "Ti", "Sc", "Ag", "N", "C"])
 
-    async def list_elements(self) -> list[str]:
+    async def list_elements(self, *args: Any, **kwargs: Any) -> list[str]:
         return await self.get_existing_elements()
 
-    async def list_papers(self, **kwargs: Any) -> list[PaperRead]:
+    async def list_papers(self, *args: Any, **kwargs: Any) -> list[PaperRead]:
         raw = self._data.get("papers", {}).get("items", [])
-        return [PaperRead.model_validate(p) for p in raw]
+        q = args[0] if args else kwargs.get("q") or kwargs.get("query")
+        limit = args[1] if len(args) > 1 else kwargs.get("limit", 50)
+        if q:
+            q_lower = str(q).lower().strip()
+            raw = [
+                p for p in raw
+                if q_lower in (p.get("title") or "").lower() or q_lower in (p.get("doi") or "").lower()
+            ]
+        return [PaperRead.model_validate(p) for p in raw[:limit]]
 
-    async def get_paper(self, paper_id: str) -> PaperRead | None:
+    async def get_paper(self, paper_id: str, *args: Any, **kwargs: Any) -> PaperRead | None:
         raw = self._data.get("papers", {}).get("items", [])
         for p in raw:
-            if p.get("id") == paper_id:
+            if str(p.get("id")) == str(paper_id):
                 return PaperRead.model_validate(p)
         if raw:
             return PaperRead.model_validate(raw[0])
         return None
 
-    async def list_observations(self, **kwargs: Any) -> list[ObservationListItem]:
+    async def list_observations(self, *args: Any, **kwargs: Any) -> list[ObservationListItem]:
         raw = self._data.get("observations", {}).get("items", [])
-        return [ObservationListItem.model_validate(o) for o in raw]
+        limit = args[0] if args else kwargs.get("limit", 50)
+        return [ObservationListItem.model_validate(o) for o in raw[:limit]]
 
     async def list_properties(self) -> list[PropertyOption]:
         raw = self._data.get("properties", [])

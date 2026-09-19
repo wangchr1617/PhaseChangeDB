@@ -28,18 +28,17 @@ export function LiteratureAgentView({ onOpenBatchUpload }: LiteratureAgentViewPr
     require_human_review: true,
   })
 
-  // 自定义大模型配置与持久化
-  const [customLLM, setCustomLLM] = useState<CustomLLMConfig | null>(() => {
+  // 安全加固：自定义大模型配置仅在当前内存状态中维护，严禁持久化明文至 localStorage
+  const [customLLM, setCustomLLM] = useState<CustomLLMConfig | null>(null)
+
+  // 页面加载时主动清理可能存在的历史遗留明文 Key
+  useEffect(() => {
     try {
-      const saved = localStorage.getItem(LOCAL_STORAGE_LLM_KEY)
-      if (saved) {
-        return JSON.parse(saved) as CustomLLMConfig
-      }
+      localStorage.removeItem(LOCAL_STORAGE_LLM_KEY)
     } catch {
       // ignore
     }
-    return null
-  })
+  }, [])
 
   const [selectedModel, setSelectedModel] = useState('gemini-2.5-pro')
   const [isSimulating, setIsSimulating] = useState(false)
@@ -57,6 +56,7 @@ export function LiteratureAgentView({ onOpenBatchUpload }: LiteratureAgentViewPr
   const [logs, setLogs] = useState<string[]>([
     '⚙️ [Agent Init] 科学文献智能解析智能体已就绪，当前加载本体契约版本 v0.3.0',
     '🔒 [Security Guard] 遵循科学家工作流规范：提取结果仅写入 ext_* 暂存区，严禁直写权威主表',
+    '🛡️ [Vault Active] 凭据安全中继已激活：大模型 API Key 仅保留在内存会话，严禁明文落地',
     '💡 [Ready] 待命中，可通过右上角【批量上传文献】投喂相变存储领域的 PDF 或 XML 格式文献',
   ])
 
@@ -110,7 +110,7 @@ export function LiteratureAgentView({ onOpenBatchUpload }: LiteratureAgentViewPr
     }
   }
 
-  // 保存自定义模型配置到 localStorage
+  // 保存自定义模型配置到会话内存中（安全隔离）
   const handleSaveModelConfig = () => {
     const trimmedModel = tempModelName.trim() || 'gemini-2.5-pro'
     const newConfig: CustomLLMConfig = {
@@ -121,12 +121,7 @@ export function LiteratureAgentView({ onOpenBatchUpload }: LiteratureAgentViewPr
     }
     setCustomLLM(newConfig)
     setSelectedModel(trimmedModel)
-    try {
-      localStorage.setItem(LOCAL_STORAGE_LLM_KEY, JSON.stringify(newConfig))
-    } catch {
-      // ignore
-    }
-    setConfigSuccessMsg('大模型配置已安全保存至本地浏览器存储！')
+    setConfigSuccessMsg('大模型配置已安全载入当前会话内存（不持久化明文，刷新即销毁）')
     setTimeout(() => {
       setIsModelModalOpen(false)
       setConfigSuccessMsg(null)
@@ -137,11 +132,6 @@ export function LiteratureAgentView({ onOpenBatchUpload }: LiteratureAgentViewPr
   const handleResetToDefault = () => {
     setCustomLLM(null)
     setSelectedModel(config.default_model)
-    try {
-      localStorage.removeItem(LOCAL_STORAGE_LLM_KEY)
-    } catch {
-      // ignore
-    }
     setIsModelModalOpen(false)
   }
 
@@ -153,33 +143,45 @@ export function LiteratureAgentView({ onOpenBatchUpload }: LiteratureAgentViewPr
     ])
   )
 
-  const handleRunDiagnostic = () => {
+  const handleRunDiagnostic = async () => {
     if (isSimulating) return
     setIsSimulating(true)
-    const activeProvider = customLLM?.provider === 'openai_compatible' ? 'OpenAI-Compatible' : 'Google Gemini'
-    const maskedKey = customLLM?.apiKey
-      ? `${customLLM.apiKey.slice(0, 4)}••••${customLLM.apiKey.slice(-3)}`
-      : '环境变量安全凭证 (Server Secret)'
+    setLogs((prev) => [
+      ...prev,
+      `🚀 [Diagnostic Started] 正在请求后端安全代理网关，检测推理节点连通性: ${selectedModel}...`,
+    ])
 
-    const newLogs: string[] = [
-      ...logs,
-      `🚀 [Diagnostic Started] 正在连接推理服务节点: ${selectedModel} (${activeProvider})...`,
-      `🔒 [Key Security] 认证凭据检测正常: [${maskedKey}]，沙箱传输已隔离`,
-      `📑 [Prompt Pipeline] 载入结构化提示词模板 ${config.prompt_version} (少样本示例: GeTe, Sb2Te3)`,
-      `🔍 [Entity Recognizer] 正在探测相变材料化学式、相变温度与潜热抽取规则...`,
-      `✅ [Model Benchmark] 连通性测试通过！响应延时 38ms，多模态图表解析与表格坐标定位已就绪。`,
-    ]
+    try {
+      const res = await fetch(`${API_BASE}/v1/agents/literature-parser/diagnostic`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: customLLM?.provider ?? 'gemini',
+          base_url: customLLM?.baseUrl || null,
+          model_name: selectedModel,
+          api_key: customLLM?.apiKey || null,
+        }),
+      })
 
-    let step = 0
-    const interval = setInterval(() => {
-      step += 1
-      if (step <= 5) {
-        setLogs((prev) => [...prev, newLogs[newLogs.length - 6 + step]])
+      if (res.ok) {
+        const data = await res.json()
+        const returnedLogs: string[] = data.logs || []
+        setLogs((prev) => [...prev, ...returnedLogs, `⚡ [Benchmark] 往返通信延时: ${data.latency_ms}ms`])
       } else {
-        clearInterval(interval)
-        setIsSimulating(false)
+        const err = await res.json().catch(() => ({}))
+        setLogs((prev) => [
+          ...prev,
+          `❌ [Diagnostic Failed] 后端代理通信失败 (HTTP ${res.status}): ${err.detail || '服务异常'}`,
+        ])
       }
-    }, 500)
+    } catch (e: any) {
+      setLogs((prev) => [
+        ...prev,
+        `⚠️ [Network Warning] 无法直连后端代理，回退本地保护模式: ${e.message || String(e)}`,
+      ])
+    } finally {
+      setIsSimulating(false)
+    }
   }
 
   return (
@@ -462,6 +464,9 @@ export function LiteratureAgentView({ onOpenBatchUpload }: LiteratureAgentViewPr
                   autoComplete="off"
                 />
                 <small className="help-text">支持输入 OpenAI / DeepSeek / Gemini API Key；若为本地免密模型可留空。</small>
+                <div style={{ marginTop: 8, padding: '8px 12px', background: 'rgba(56, 189, 248, 0.08)', borderRadius: 6, fontSize: '0.8rem', color: '#0284c7' }}>
+                  🛡️ <strong>安全保密规范</strong>：自定义 API Key 仅在当前会话内存中维护，绝不持久化到 LocalStorage 或硬盘；请求经由后端安全中继代理并实施日志敏感脱敏。
+                </div>
               </div>
             </div>
 

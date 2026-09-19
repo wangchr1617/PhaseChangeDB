@@ -310,10 +310,26 @@ export function PropertyComparisonBoard({ onSelectPaper, onSelectMaterial }: Pro
     })
   }
 
+  const handleExport = (format: 'csv' | 'json') => {
+    const params = new URLSearchParams()
+    params.set('property_code', selectedPropCode)
+    if (selectedMaterials.length === 1) {
+      params.set('base_material', selectedMaterials[0])
+    }
+    if (heatingRateFilter) {
+      params.set('heating_rate', heatingRateFilter)
+    }
+    params.set('display_unit', useAltUnit ? 'kelvin' : 'celsius')
+    params.set('format', format)
+
+    const downloadUrl = `${API_BASE}/v1/analytics/property-comparison/export?${params.toString()}`
+    window.open(downloadUrl, '_blank')
+  }
+
   return (
     <div className="property-comparison-container">
       {/* 顶部标题与科学语义提示 */}
-      <div className="pc-header">
+      <div className="pc-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '12px' }}>
         <div>
           <div className="pc-badge">
             <span className="pulse-indicator" />
@@ -323,6 +339,48 @@ export function PropertyComparisonBoard({ onSelectPaper, onSelectMaterial }: Pro
           <p className="pc-subtitle">
             对齐实验条件与测量标尺，横向对比多材料物性演变，支持直接溯源文献证据。
           </p>
+        </div>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '4px' }}>
+          <button
+            className="secondary-btn"
+            style={{
+              padding: '6px 14px',
+              fontSize: '13px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              cursor: 'pointer',
+              borderRadius: '6px',
+              border: '1px solid #cbd5e1',
+              backgroundColor: '#fff',
+              color: '#334155',
+              fontWeight: 500,
+            }}
+            onClick={() => handleExport('csv')}
+            title="导出为符合 Origin/Excel 规范的科研级 CSV (UTF-8 BOM 编码)"
+          >
+            📥 导出科研数据 (CSV)
+          </button>
+          <button
+            className="secondary-btn"
+            style={{
+              padding: '6px 14px',
+              fontSize: '13px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              cursor: 'pointer',
+              borderRadius: '6px',
+              border: '1px solid #cbd5e1',
+              backgroundColor: '#fff',
+              color: '#334155',
+              fontWeight: 500,
+            }}
+            onClick={() => handleExport('json')}
+            title="导出包含完整元数据与证据链的 JSON"
+          >
+            📋 导出 JSON
+          </button>
         </div>
       </div>
 

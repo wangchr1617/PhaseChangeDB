@@ -1,7 +1,10 @@
+import codecs
+import csv
+import io
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Response, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid6 import uuid7
 
@@ -14,6 +17,7 @@ from app.application.literature_parser import (
 from app.demo.demo_provider import DemoCatalogRepository, get_demo_repository
 from app.infrastructure.database import get_session
 from app.infrastructure.mysql_catalog import MySQLCatalogRepository
+from app.infrastructure.parsers.crossref_client import CrossrefClient
 from app.models.batch_upload import (
     BatchIngestRequest,
     BatchIngestResponse,
@@ -129,6 +133,37 @@ async def get_paper(paper_id: UUID, repository: Repository) -> PaperRead:
     if paper is None:
         raise HTTPException(status_code=404, detail="文献不存在")
     return paper
+
+
+@router.get(
+    "/literature/lookup-doi",
+    response_model=ParsedPaperPreview,
+    tags=["literature"],
+    summary="基于 DOI 查询官方权威文献元数据 (Crossref REST API 礼貌池)",
+)
+async def lookup_literature_by_doi(
+    doi: Annotated[str, Query(description="标准论文 DOI，例如 10.1038/s41563-021-01109-w")],
+) -> ParsedPaperPreview:
+    client = CrossrefClient()
+    meta = await client.lookup_doi(doi)
+    if not meta:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"未能在 Crossref 知识库中找到 DOI [{doi}] 对应的文献元数据",
+        )
+    return ParsedPaperPreview(
+        file_id=str(uuid7()),
+        filename=f"doi_{doi.replace('/', '_')}.ref",
+        file_size=0,
+        title=meta.get("title") or "Untitled Document",
+        journal=meta.get("journal"),
+        publication_year=meta.get("publication_year"),
+        first_author=meta.get("first_author"),
+        corresponding_author=meta.get("corresponding_author"),
+        doi=meta.get("doi") or doi,
+        abstract=meta.get("abstract"),
+        status="parsed",
+    )
 
 
 @router.post("/literature/batch-upload", response_model=BatchUploadResponse, tags=["literature"])
@@ -287,5 +322,96 @@ async def get_property_comparison(
         heating_rate=heating_rate,
         display_unit=display_unit,
     )
+
+
+@router.get(
+    "/analytics/property-comparison/export",
+    tags=["analytics"],
+    summary="导出相变材料物性跨文献横向对比科研数据 (CSV 带 UTF-8 BOM 或 JSON)",
+)
+async def export_property_comparison(
+    repository: Repository,
+    property_code: str = Query(default="crystallization_temperature", description="属性代码"),
+    base_material: str | None = Query(default=None, description="基础材料筛选（如 GeTe, Sb2Te3）"),
+    heating_rate: float | None = Query(default=None, description="升温速率筛选 (K/min)"),
+    display_unit: str = Query(default="celsius", description="温度显示单位 (celsius / kelvin)"),
+    export_format: str = Query(default="csv", alias="format", description="导出格式: csv | json"),
+) -> Response:
+    comparison = await repository.get_property_comparison(
+        property_code=property_code,
+        base_material=base_material,
+        heating_rate=heating_rate,
+        display_unit=display_unit,
+    )
+
+    if export_format.lower() == "json":
+        return Response(
+            content=comparison.model_dump_json(indent=2),
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="pcm_comparison_{property_code}.json"'},
+        )
+
+    # 默认生成带 UTF-8 BOM 的科研标准 CSV
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow([
+        "observation_id",
+        "property_code",
+        "property_name",
+        "base_material",
+        "sample_formula",
+        "dopant_element",
+        "dopant_at_pct",
+        "value",
+        "unit",
+        "normalized_value",
+        "normalized_unit",
+        "heating_rate_k_per_min",
+        "measurement_method",
+        "film_thickness_nm",
+        "substrate",
+        "paper_doi",
+        "paper_title",
+        "first_author",
+        "paper_year",
+        "evidence_snippet",
+        "verification_status",
+        "quality_score",
+    ])
+
+    for dp in comparison.data_points:
+        writer.writerow([
+            str(dp.observation_id),
+            dp.property_code,
+            dp.property_name,
+            dp.base_material,
+            dp.sample_formula,
+            dp.dopant_element or "",
+            dp.dopant_at_pct if dp.dopant_at_pct is not None else "",
+            dp.value,
+            dp.unit,
+            dp.normalized_value if dp.normalized_value is not None else "",
+            dp.normalized_unit or "",
+            dp.heating_rate_k_per_min if dp.heating_rate_k_per_min is not None else "",
+            dp.measurement_method or "",
+            dp.film_thickness_nm if dp.film_thickness_nm is not None else "",
+            dp.substrate or "",
+            dp.paper_doi or "",
+            dp.paper_title or "",
+            dp.first_author or "",
+            dp.paper_year if dp.paper_year is not None else "",
+            dp.evidence_snippet or "",
+            dp.verification_status,
+            dp.quality_score if dp.quality_score is not None else "",
+        ])
+
+    csv_bytes = codecs.BOM_UTF8 + output.getvalue().encode("utf-8")
+    filename = f"pcm_comparison_{property_code}.csv"
+    return Response(
+        content=csv_bytes,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
 
 

@@ -11,7 +11,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.api import extraction, mvp, workflow
+from app.api import agent, extraction, mvp, workflow
 from app.core.config import get_settings
 from app.domain.workflow import WorkflowDomainError
 from app.infrastructure.database import session_factory
@@ -32,11 +32,13 @@ app.add_middleware(
 app.include_router(mvp.router)
 app.include_router(workflow.router)
 app.include_router(extraction.router)
+app.include_router(agent.router)
 
 # 兼容前端在无 Nginx 反代直连场景（直接请求 /api/v1/*）
 app.include_router(mvp.router, prefix="/api")
 app.include_router(workflow.router, prefix="/api")
 app.include_router(extraction.router, prefix="/api")
+app.include_router(agent.router, prefix="/api")
 
 
 STATUS_TITLE_MAP = {

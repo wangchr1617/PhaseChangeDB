@@ -8,6 +8,12 @@ importers:
 
   .:
     dependencies:
+      '@types/cytoscape':
+        specifier: ^3.31.0
+        version: 3.31.0
+      cytoscape:
+        specifier: ^3.34.3
+        version: 3.34.3
       react:
         specifier: ^19.2.8
         version: 19.2.8
@@ -263,6 +269,10 @@ packages:
   '@rolldown/pluginutils@1.0.1':
     resolution: {integrity: sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw==}
 
+  '@types/cytoscape@3.31.0':
+    resolution: {integrity: sha512-EXHOHxqQjGxLDEh5cP4te6J0bi7LbCzmZkzsR6f703igUac8UGMdEohMyU3GHAayCTZrLQOMnaE/lqB2Ekh8Ww==}
+    deprecated: This is a stub types definition. cytoscape provides its own type definitions, so you do not need this installed.
+
   '@types/node@24.13.3':
     resolution: {integrity: sha512-Dh8vAsV36ig5wa9OX4pXvMc9D3Veibfw2wix0CUwYODLD8nkj9UsLjASr49nPg+2eKzxhBV+v7L8pXvT4e639Q==}
 
@@ -292,6 +302,10 @@ packages:
 
   csstype@3.2.3:
     resolution: {integrity: sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==}
+
+  cytoscape@3.34.3:
+    resolution: {integrity: sha512-yfYGhRcGAntq6YBD583j4n0Eg3jIxvWmZtz/5uz9UYkeIStSlMxuUja+ec5j3iBD8nv1rwaOAYMW09tBdkSeaQ==}
+    engines: {node: '>=0.10'}
 
   detect-libc@2.1.2:
     resolution: {integrity: sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==}
@@ -598,6 +612,10 @@ snapshots:
 
   '@rolldown/pluginutils@1.0.1': {}
 
+  '@types/cytoscape@3.31.0':
+    dependencies:
+      cytoscape: 3.34.3
+
   '@types/node@24.13.3':
     dependencies:
       undici-types: 7.18.2
@@ -616,6 +634,8 @@ snapshots:
       vite: 8.2.2(@types/node@24.13.3)
 
   csstype@3.2.3: {}
+
+  cytoscape@3.34.3: {}
 
   detect-libc@2.1.2: {}
 

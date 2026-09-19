@@ -511,6 +511,50 @@
         }
       }
     },
+    "/v1/literature/lookup-doi": {
+      "get": {
+        "tags": [
+          "literature"
+        ],
+        "summary": "基于 DOI 查询官方权威文献元数据 (Crossref REST API 礼貌池)",
+        "operationId": "lookup_literature_by_doi_v1_literature_lookup_doi_get",
+        "parameters": [
+          {
+            "name": "doi",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "标准论文 DOI，例如 10.1038/s41563-021-01109-w",
+              "title": "Doi"
+            },
+            "description": "标准论文 DOI，例如 10.1038/s41563-021-01109-w"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParsedPaperPreview"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v1/literature/batch-upload": {
       "post": {
         "tags": [
@@ -1025,6 +1069,109 @@
                 "schema": {
                   "$ref": "#/components/schemas/PropertyComparisonResponse"
                 }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/analytics/property-comparison/export": {
+      "get": {
+        "tags": [
+          "analytics"
+        ],
+        "summary": "导出相变材料物性跨文献横向对比科研数据 (CSV 带 UTF-8 BOM 或 JSON)",
+        "operationId": "export_property_comparison_v1_analytics_property_comparison_export_get",
+        "parameters": [
+          {
+            "name": "property_code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "属性代码",
+              "default": "crystallization_temperature",
+              "title": "Property Code"
+            },
+            "description": "属性代码"
+          },
+          {
+            "name": "base_material",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "基础材料筛选（如 GeTe, Sb2Te3）",
+              "title": "Base Material"
+            },
+            "description": "基础材料筛选（如 GeTe, Sb2Te3）"
+          },
+          {
+            "name": "heating_rate",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "升温速率筛选 (K/min)",
+              "title": "Heating Rate"
+            },
+            "description": "升温速率筛选 (K/min)"
+          },
+          {
+            "name": "display_unit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "温度显示单位 (celsius / kelvin)",
+              "default": "celsius",
+              "title": "Display Unit"
+            },
+            "description": "温度显示单位 (celsius / kelvin)"
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "导出格式: csv | json",
+              "default": "csv",
+              "title": "Format"
+            },
+            "description": "导出格式: csv | json"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           },
@@ -1663,6 +1810,2058 @@
         }
       }
     },
+    "/v1/agent/query": {
+      "post": {
+        "tags": [
+          "agent"
+        ],
+        "summary": "Ask Scientist",
+        "description": "Scientist Agent entry point.\n\nThe implementation must call domain tools/services. Direct SQL, direct\nElasticsearch queries, or direct Cypher from the LLM layer are forbidden.",
+        "operationId": "ask_scientist_v1_agent_query_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentAskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentAnswer"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/agents/literature-parser/diagnostic": {
+      "post": {
+        "tags": [
+          "agent"
+        ],
+        "summary": "大模型连通性与配置安全诊断 (支持混合双模: 用户自备 Key / 服务端托管 Key)",
+        "operationId": "diagnose_literature_agent_v1_agents_literature_parser_diagnostic_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentDiagnosticRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentDiagnosticResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/agents/literature-parser/extract": {
+      "post": {
+        "tags": [
+          "agent"
+        ],
+        "summary": "大模型相变物性结构化抽取并暂存至 ext_candidate（混合双模代理 + 领域 Schema 归一化）",
+        "operationId": "extract_literature_properties_v1_agents_literature_parser_extract_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentExtractRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentExtractResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/dashboard": {
+      "get": {
+        "tags": [
+          "dashboard"
+        ],
+        "summary": "Dashboard",
+        "operationId": "dashboard_api_v1_dashboard_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardRead"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/materials": {
+      "get": {
+        "tags": [
+          "materials"
+        ],
+        "summary": "List Materials",
+        "operationId": "list_materials_api_v1_materials_get",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "name": "elements",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "逗号分隔的元素列表，如 Ge,Sb,Te",
+              "title": "Elements"
+            },
+            "description": "逗号分隔的元素列表，如 Ge,Sb,Te"
+          },
+          {
+            "name": "min_tc",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "相变温度/结晶温度下限 (K)",
+              "title": "Min Tc"
+            },
+            "description": "相变温度/结晶温度下限 (K)"
+          },
+          {
+            "name": "max_tc",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "相变温度/结晶温度上限 (K)",
+              "title": "Max Tc"
+            },
+            "description": "相变温度/结晶温度上限 (K)"
+          },
+          {
+            "name": "min_latent_heat",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "潜热下限 (J/g)",
+              "title": "Min Latent Heat"
+            },
+            "description": "潜热下限 (J/g)"
+          },
+          {
+            "name": "max_latent_heat",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "潜热上限 (J/g)",
+              "title": "Max Latent Heat"
+            },
+            "description": "潜热上限 (J/g)"
+          },
+          {
+            "name": "low_toxicity",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "是否筛选低毒性材料",
+              "title": "Low Toxicity"
+            },
+            "description": "是否筛选低毒性材料"
+          },
+          {
+            "name": "cost_effective",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "是否筛选成本可控材料",
+              "title": "Cost Effective"
+            },
+            "description": "是否筛选成本可控材料"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CursorPage_MaterialRead_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "materials"
+        ],
+        "summary": "Create Material",
+        "operationId": "create_material_api_v1_materials_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MaterialCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaterialRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/materials/elements": {
+      "get": {
+        "tags": [
+          "materials"
+        ],
+        "summary": "List Existing Elements",
+        "operationId": "list_existing_elements_api_v1_materials_elements_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array",
+                  "title": "Response List Existing Elements Api V1 Materials Elements Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/materials/{material_id}": {
+      "get": {
+        "tags": [
+          "materials"
+        ],
+        "summary": "Get Material",
+        "operationId": "get_material_api_v1_materials__material_id__get",
+        "parameters": [
+          {
+            "name": "material_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Material Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MaterialRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/materials/{material_id}/conflicts": {
+      "get": {
+        "tags": [
+          "materials"
+        ],
+        "summary": "Get Material Conflicts",
+        "operationId": "get_material_conflicts_api_v1_materials__material_id__conflicts_get",
+        "parameters": [
+          {
+            "name": "material_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Material Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ObservationConflictGroup"
+                  },
+                  "title": "Response Get Material Conflicts Api V1 Materials  Material Id  Conflicts Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/papers": {
+      "get": {
+        "tags": [
+          "literature"
+        ],
+        "summary": "List Papers",
+        "operationId": "list_papers_api_v1_papers_get",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CursorPage_PaperRead_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "literature"
+        ],
+        "summary": "Create Paper",
+        "operationId": "create_paper_api_v1_papers_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PaperCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaperRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/papers/{paper_id}": {
+      "get": {
+        "tags": [
+          "literature"
+        ],
+        "summary": "Get Paper",
+        "operationId": "get_paper_api_v1_papers__paper_id__get",
+        "parameters": [
+          {
+            "name": "paper_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Paper Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PaperRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/literature/lookup-doi": {
+      "get": {
+        "tags": [
+          "literature"
+        ],
+        "summary": "基于 DOI 查询官方权威文献元数据 (Crossref REST API 礼貌池)",
+        "operationId": "lookup_literature_by_doi_api_v1_literature_lookup_doi_get",
+        "parameters": [
+          {
+            "name": "doi",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "标准论文 DOI，例如 10.1038/s41563-021-01109-w",
+              "title": "Doi"
+            },
+            "description": "标准论文 DOI，例如 10.1038/s41563-021-01109-w"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ParsedPaperPreview"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/literature/batch-upload": {
+      "post": {
+        "tags": [
+          "literature"
+        ],
+        "summary": "Batch Upload Papers",
+        "operationId": "batch_upload_papers_api_v1_literature_batch_upload_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_batch_upload_papers_api_v1_literature_batch_upload_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchUploadResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/literature/batch-ingest": {
+      "post": {
+        "tags": [
+          "literature"
+        ],
+        "summary": "Batch Ingest Papers",
+        "operationId": "batch_ingest_papers_api_v1_literature_batch_ingest_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchIngestRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchIngestResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/observations": {
+      "get": {
+        "tags": [
+          "observations"
+        ],
+        "summary": "List Observations",
+        "operationId": "list_observations_api_v1_observations_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CursorPage_ObservationListItem_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "observations"
+        ],
+        "summary": "Create Observation",
+        "operationId": "create_observation_api_v1_observations_post",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ObservationCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObservationRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/properties": {
+      "get": {
+        "tags": [
+          "ontology"
+        ],
+        "summary": "List Properties",
+        "operationId": "list_properties_api_v1_properties_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/PropertyOption"
+                  },
+                  "type": "array",
+                  "title": "Response List Properties Api V1 Properties Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/search": {
+      "post": {
+        "tags": [
+          "search"
+        ],
+        "summary": "Search",
+        "operationId": "search_api_v1_search_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SearchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config": {
+      "get": {
+        "tags": [
+          "config"
+        ],
+        "summary": "Get Config",
+        "operationId": "get_config_api_v1_config_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppConfigRead"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "config"
+        ],
+        "summary": "Update Config",
+        "operationId": "update_config_api_v1_config_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AppConfigUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AppConfigRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/agents/literature-parser/config": {
+      "get": {
+        "tags": [
+          "agent"
+        ],
+        "summary": "Get Literature Agent Config",
+        "operationId": "get_literature_agent_config_api_v1_agents_literature_parser_config_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiteratureAgentConfig"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/literature/stats": {
+      "get": {
+        "tags": [
+          "literature"
+        ],
+        "summary": "Get Literature Stats",
+        "operationId": "get_literature_stats_api_v1_literature_stats_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LiteratureStatsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/knowledge-graph/graph": {
+      "get": {
+        "tags": [
+          "knowledge"
+        ],
+        "summary": "Get Knowledge Graph",
+        "operationId": "get_knowledge_graph_api_v1_knowledge_graph_graph_get",
+        "parameters": [
+          {
+            "name": "element",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Element"
+            }
+          },
+          {
+            "name": "material_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Material Id"
+            }
+          },
+          {
+            "name": "include_papers",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Include Papers"
+            }
+          },
+          {
+            "name": "subgraph",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Subgraph"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 60,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeGraphResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/analytics/property-comparison": {
+      "get": {
+        "tags": [
+          "analytics"
+        ],
+        "summary": "多维相变材料物性跨文献横向对比与统计分布",
+        "operationId": "get_property_comparison_api_v1_analytics_property_comparison_get",
+        "parameters": [
+          {
+            "name": "property_code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "属性代码",
+              "default": "crystallization_temperature",
+              "title": "Property Code"
+            },
+            "description": "属性代码"
+          },
+          {
+            "name": "base_material",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "基础材料筛选（如 GeTe, Sb2Te3）",
+              "title": "Base Material"
+            },
+            "description": "基础材料筛选（如 GeTe, Sb2Te3）"
+          },
+          {
+            "name": "heating_rate",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "升温速率筛选 (K/min)",
+              "title": "Heating Rate"
+            },
+            "description": "升温速率筛选 (K/min)"
+          },
+          {
+            "name": "display_unit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "温度显示单位 (celsius / kelvin)",
+              "default": "celsius",
+              "title": "Display Unit"
+            },
+            "description": "温度显示单位 (celsius / kelvin)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PropertyComparisonResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/analytics/property-comparison/export": {
+      "get": {
+        "tags": [
+          "analytics"
+        ],
+        "summary": "导出相变材料物性跨文献横向对比科研数据 (CSV 带 UTF-8 BOM 或 JSON)",
+        "operationId": "export_property_comparison_api_v1_analytics_property_comparison_export_get",
+        "parameters": [
+          {
+            "name": "property_code",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "属性代码",
+              "default": "crystallization_temperature",
+              "title": "Property Code"
+            },
+            "description": "属性代码"
+          },
+          {
+            "name": "base_material",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "基础材料筛选（如 GeTe, Sb2Te3）",
+              "title": "Base Material"
+            },
+            "description": "基础材料筛选（如 GeTe, Sb2Te3）"
+          },
+          {
+            "name": "heating_rate",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "升温速率筛选 (K/min)",
+              "title": "Heating Rate"
+            },
+            "description": "升温速率筛选 (K/min)"
+          },
+          {
+            "name": "display_unit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "温度显示单位 (celsius / kelvin)",
+              "default": "celsius",
+              "title": "Display Unit"
+            },
+            "description": "温度显示单位 (celsius / kelvin)"
+          },
+          {
+            "name": "format",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "导出格式: csv | json",
+              "default": "csv",
+              "title": "Format"
+            },
+            "description": "导出格式: csv | json"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workflow/intake": {
+      "post": {
+        "tags": [
+          "workflow"
+        ],
+        "summary": "完整科研记录录入（论文、制品、材料、样品、测量、证据与观测）",
+        "operationId": "intake_api_v1_workflow_intake_post",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorkflowIntakeRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorkflowIntakeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workflow/observations/{observation_id}": {
+      "get": {
+        "tags": [
+          "workflow"
+        ],
+        "summary": "获取观测详情与完整证据溯源上下文",
+        "operationId": "get_observation_detail_api_v1_workflow_observations__observation_id__get",
+        "parameters": [
+          {
+            "name": "observation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Observation Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObservationDetailRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workflow/observations/{observation_id}/review": {
+      "post": {
+        "tags": [
+          "workflow"
+        ],
+        "summary": "人工审核观测（AI_EXTRACTED → HUMAN_REVIEWED → VERIFIED / DISPUTED / RETRACTED）",
+        "operationId": "review_observation_api_v1_workflow_observations__observation_id__review_post",
+        "parameters": [
+          {
+            "name": "observation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Observation Id"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ObservationReviewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObservationReviewResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/workflow/terms": {
+      "get": {
+        "tags": [
+          "workflow"
+        ],
+        "summary": "按命名空间获取本体术语选项（如 sample_type, measurement_type）",
+        "operationId": "list_terms_api_v1_workflow_terms_get",
+        "parameters": [
+          {
+            "name": "namespace",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "本体术语命名空间",
+              "title": "Namespace"
+            },
+            "description": "本体术语命名空间"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": true
+                  },
+                  "title": "Response List Terms Api V1 Workflow Terms Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/extractions/candidates": {
+      "post": {
+        "tags": [
+          "extraction"
+        ],
+        "summary": "暂存 AI 提取候选数据（只写入 ext_* 暂存区，严禁直写正式 Observation）",
+        "operationId": "stage_candidate_api_v1_extractions_candidates_post",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Idempotency-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExtractionCandidateCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtractionCandidateCreateResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/extraction-candidates/{candidate_id}": {
+      "get": {
+        "tags": [
+          "extraction"
+        ],
+        "summary": "获取指定 AI 提取候选详情与原始载荷",
+        "operationId": "get_candidate_api_v1_extraction_candidates__candidate_id__get",
+        "parameters": [
+          {
+            "name": "candidate_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Candidate Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtractionCandidateRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/extraction-candidates/{candidate_id}/review": {
+      "post": {
+        "tags": [
+          "extraction"
+        ],
+        "summary": "人工审核并晋升提取候选（ACCEPT晋升为 HUMAN_REVIEWED / REJECT拒绝）",
+        "operationId": "review_candidate_api_v1_extraction_candidates__candidate_id__review_post",
+        "parameters": [
+          {
+            "name": "candidate_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Candidate Id"
+            }
+          },
+          {
+            "name": "If-Match",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "If-Match"
+            }
+          },
+          {
+            "name": "Authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CandidateReviewRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CandidateReviewResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/documents/{document_id}/extractions": {
+      "post": {
+        "tags": [
+          "extraction"
+        ],
+        "summary": "Start Extraction",
+        "operationId": "start_extraction_api_v1_documents__document_id__extractions_post",
+        "parameters": [
+          {
+            "name": "document_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Document Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExtractionStart"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtractionRunRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/extractions/{run_id}": {
+      "get": {
+        "tags": [
+          "extraction"
+        ],
+        "summary": "Get Extraction",
+        "operationId": "get_extraction_api_v1_extractions__run_id__get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Run Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExtractionRunRead"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/extractions/{run_id}/candidates": {
+      "get": {
+        "tags": [
+          "extraction"
+        ],
+        "summary": "List Candidates",
+        "operationId": "list_candidates_api_v1_extractions__run_id__candidates_get",
+        "parameters": [
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Run Id"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 500,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CursorPage_ExtractionCandidateRead_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/agent/query": {
+      "post": {
+        "tags": [
+          "agent"
+        ],
+        "summary": "Ask Scientist",
+        "description": "Scientist Agent entry point.\n\nThe implementation must call domain tools/services. Direct SQL, direct\nElasticsearch queries, or direct Cypher from the LLM layer are forbidden.",
+        "operationId": "ask_scientist_api_v1_agent_query_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentAskRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentAnswer"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/agents/literature-parser/diagnostic": {
+      "post": {
+        "tags": [
+          "agent"
+        ],
+        "summary": "大模型连通性与配置安全诊断 (支持混合双模: 用户自备 Key / 服务端托管 Key)",
+        "operationId": "diagnose_literature_agent_api_v1_agents_literature_parser_diagnostic_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentDiagnosticRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentDiagnosticResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/agents/literature-parser/extract": {
+      "post": {
+        "tags": [
+          "agent"
+        ],
+        "summary": "大模型相变物性结构化抽取并暂存至 ext_candidate（混合双模代理 + 领域 Schema 归一化）",
+        "operationId": "extract_literature_properties_api_v1_agents_literature_parser_extract_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentExtractRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentExtractResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/health": {
       "get": {
         "tags": [
@@ -1718,6 +3917,400 @@
   },
   "components": {
     "schemas": {
+      "AgentAnswer": {
+        "properties": {
+          "answer": {
+            "type": "string",
+            "title": "Answer"
+          },
+          "confidence": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Confidence"
+          },
+          "limitations": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Limitations"
+          },
+          "evidence": {
+            "items": {
+              "$ref": "#/components/schemas/AgentEvidence"
+            },
+            "type": "array",
+            "title": "Evidence"
+          },
+          "tool_trace_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Tool Trace Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "answer",
+          "confidence",
+          "tool_trace_id"
+        ],
+        "title": "AgentAnswer"
+      },
+      "AgentAskRequest": {
+        "properties": {
+          "question": {
+            "type": "string",
+            "maxLength": 10000,
+            "minLength": 1,
+            "title": "Question"
+          },
+          "material_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Material Ids"
+          },
+          "require_verified": {
+            "type": "boolean",
+            "title": "Require Verified",
+            "default": true
+          },
+          "include_conflicting_evidence": {
+            "type": "boolean",
+            "title": "Include Conflicting Evidence",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "question"
+        ],
+        "title": "AgentAskRequest"
+      },
+      "AgentDiagnosticRequest": {
+        "properties": {
+          "provider": {
+            "type": "string",
+            "title": "Provider",
+            "description": "服务商: gemini 或 openai_compatible",
+            "default": "gemini"
+          },
+          "base_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Url",
+            "description": "自定义基准接口地址"
+          },
+          "model_name": {
+            "type": "string",
+            "title": "Model Name",
+            "description": "模型标识符",
+            "default": "gemini-2.5-pro"
+          },
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key",
+            "description": "用户自定义 API Key (可选)"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "AgentDiagnosticRequest"
+      },
+      "AgentDiagnosticResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "description": "诊断状态: success | warning | error"
+          },
+          "model_name": {
+            "type": "string",
+            "title": "Model Name"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "key_mode": {
+            "type": "string",
+            "title": "Key Mode",
+            "description": "密钥模式: custom_user_key | server_hosted_key | demo_simulation"
+          },
+          "masked_key": {
+            "type": "string",
+            "title": "Masked Key"
+          },
+          "latency_ms": {
+            "type": "integer",
+            "title": "Latency Ms"
+          },
+          "logs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Logs"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "status",
+          "model_name",
+          "provider",
+          "key_mode",
+          "masked_key",
+          "latency_ms",
+          "logs"
+        ],
+        "title": "AgentDiagnosticResponse"
+      },
+      "AgentEvidence": {
+        "properties": {
+          "evidence_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Evidence Id"
+          },
+          "paper_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Paper Id"
+          },
+          "page_number": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Page Number"
+          },
+          "figure_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Figure Number"
+          },
+          "table_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Table Number"
+          },
+          "snippet": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Snippet"
+          },
+          "stance": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stance"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "evidence_id",
+          "paper_id"
+        ],
+        "title": "AgentEvidence"
+      },
+      "AgentExtractRequest": {
+        "properties": {
+          "text": {
+            "type": "string",
+            "minLength": 10,
+            "title": "Text",
+            "description": "待抽取的文献全文、段落或图表上下文文本"
+          },
+          "paper_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Id",
+            "description": "已入库文献的 UUID (可选)"
+          },
+          "paper_title": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Title",
+            "description": "文献标题"
+          },
+          "paper_doi": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Paper Doi",
+            "description": "文献 DOI"
+          },
+          "first_author": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Author",
+            "description": "第一作者"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider",
+            "description": "推理引擎提供商: gemini | openai_compatible",
+            "default": "gemini"
+          },
+          "model_name": {
+            "type": "string",
+            "title": "Model Name",
+            "description": "大模型标识",
+            "default": "gemini-2.5-pro"
+          },
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key",
+            "description": "用户自备 API Key (可选)"
+          },
+          "auto_stage": {
+            "type": "boolean",
+            "title": "Auto Stage",
+            "description": "是否自动写入 ext_candidate 暂存区",
+            "default": true
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "text"
+        ],
+        "title": "AgentExtractRequest"
+      },
+      "AgentExtractResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status",
+            "default": "success"
+          },
+          "model_used": {
+            "type": "string",
+            "title": "Model Used"
+          },
+          "provider": {
+            "type": "string",
+            "title": "Provider"
+          },
+          "key_mode": {
+            "type": "string",
+            "title": "Key Mode"
+          },
+          "candidates_extracted": {
+            "type": "integer",
+            "title": "Candidates Extracted"
+          },
+          "staged_candidate_ids": {
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "type": "array",
+            "title": "Staged Candidate Ids"
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/ExtractedPropertyItem"
+            },
+            "type": "array",
+            "title": "Candidates"
+          },
+          "logs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Logs"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "model_used",
+          "provider",
+          "key_mode",
+          "candidates_extracted"
+        ],
+        "title": "AgentExtractResponse"
+      },
       "AppConfigRead": {
         "properties": {
           "app_title": {
@@ -1984,6 +4577,23 @@
           "items"
         ],
         "title": "BatchUploadResponse"
+      },
+      "Body_batch_upload_papers_api_v1_literature_batch_upload_post": {
+        "properties": {
+          "files": {
+            "items": {
+              "type": "string",
+              "contentMediaType": "application/octet-stream"
+            },
+            "type": "array",
+            "title": "Files"
+          }
+        },
+        "type": "object",
+        "required": [
+          "files"
+        ],
+        "title": "Body_batch_upload_papers_api_v1_literature_batch_upload_post"
       },
       "Body_batch_upload_papers_v1_literature_batch_upload_post": {
         "properties": {
@@ -2927,6 +5537,155 @@
           "context"
         ],
         "title": "EvidenceRole"
+      },
+      "ExtractedPropertyItem": {
+        "properties": {
+          "property_code": {
+            "type": "string",
+            "title": "Property Code"
+          },
+          "nominal_material": {
+            "type": "string",
+            "title": "Nominal Material"
+          },
+          "sample_formula": {
+            "type": "string",
+            "title": "Sample Formula"
+          },
+          "dopant_element": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dopant Element"
+          },
+          "dopant_ratio_at_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dopant Ratio At Pct"
+          },
+          "original_value": {
+            "type": "number",
+            "title": "Original Value"
+          },
+          "original_unit": {
+            "type": "string",
+            "title": "Original Unit"
+          },
+          "normalized_value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Normalized Value"
+          },
+          "normalized_unit_term_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Normalized Unit Term Id"
+          },
+          "heating_rate_k_per_min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Heating Rate K Per Min"
+          },
+          "film_thickness_nm": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Film Thickness Nm"
+          },
+          "substrate": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Substrate"
+          },
+          "measurement_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Measurement Method"
+          },
+          "evidence_text": {
+            "type": "string",
+            "title": "Evidence Text"
+          },
+          "figure_or_table": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Figure Or Table"
+          },
+          "page_number": {
+            "type": "integer",
+            "title": "Page Number",
+            "default": 1
+          },
+          "confidence": {
+            "type": "number",
+            "title": "Confidence",
+            "default": 0.9
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "property_code",
+          "nominal_material",
+          "sample_formula",
+          "original_value",
+          "original_unit",
+          "evidence_text"
+        ],
+        "title": "ExtractedPropertyItem"
       },
       "ExtractionCandidateCreateRequest": {
         "properties": {

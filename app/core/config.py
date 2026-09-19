@@ -11,6 +11,10 @@ class Settings(BaseSettings):
     database_url: str = "mysql+asyncmy://phasechange:phasechange@127.0.0.1:3306/phasechangedb"
     cors_origins: str = "http://localhost:5173,http://localhost:8080"
     reviewer_token: str | None = None
+    secret_key: str = "phasechange-dev-secret-key-change-in-production-32b"
+    gemini_api_key: str | None = None
+    deepseek_api_key: str | None = None
+    crossref_mailto: str = "contact@phasechangedb.org"
 
     model_config = SettingsConfigDict(env_file=".env", env_prefix="PCM_", extra="ignore")
 
